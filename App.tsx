@@ -45,26 +45,50 @@ const normalizeUrl = (url: string): string => {
 };
 
 const CategoryBadge: React.FC<{ category: string }> = ({ category }) => {
-  let colorClass = "bg-gray-800 text-gray-300 border-gray-700";
-  let Icon = Globe;
+  // Generate a consistent color based on the category string
+  const getColor = (str: string) => {
+    const colors = [
+      "bg-red-900/30 text-red-200 border-red-900/50",
+      "bg-orange-900/30 text-orange-200 border-orange-900/50",
+      "bg-amber-900/30 text-amber-200 border-amber-900/50",
+      "bg-yellow-900/30 text-yellow-200 border-yellow-900/50",
+      "bg-lime-900/30 text-lime-200 border-lime-900/50",
+      "bg-green-900/30 text-green-200 border-green-900/50",
+      "bg-emerald-900/30 text-emerald-200 border-emerald-900/50",
+      "bg-teal-900/30 text-teal-200 border-teal-900/50",
+      "bg-cyan-900/30 text-cyan-200 border-cyan-900/50",
+      "bg-sky-900/30 text-sky-200 border-sky-900/50",
+      "bg-blue-900/30 text-blue-200 border-blue-900/50",
+      "bg-indigo-900/30 text-indigo-200 border-indigo-900/50",
+      "bg-violet-900/30 text-violet-200 border-violet-900/50",
+      "bg-purple-900/30 text-purple-200 border-purple-900/50",
+      "bg-fuchsia-900/30 text-fuchsia-200 border-fuchsia-900/50",
+      "bg-pink-900/30 text-pink-200 border-pink-900/50",
+      "bg-rose-900/30 text-rose-200 border-rose-900/50",
+    ];
 
-  const lower = category.toLowerCase();
-  if (lower.includes('threat') || lower.includes('intel') || lower.includes('sicurezza')) {
-    colorClass = "bg-red-900/30 text-red-200 border-red-900/50";
-    Icon = Shield;
-  } else if (lower.includes('server') || lower.includes('asset') || lower.includes('host')) {
-    colorClass = "bg-blue-900/30 text-blue-200 border-blue-900/50";
-    Icon = Server;
-  } else if (lower.includes('code') || lower.includes('dork') || lower.includes('codice')) {
-    colorClass = "bg-purple-900/30 text-purple-200 border-purple-900/50";
-    Icon = Code;
-  } else if (lower.includes('wifi') || lower.includes('net') || lower.includes('rete')) {
-    colorClass = "bg-amber-900/30 text-amber-200 border-amber-900/50";
-    Icon = Wifi;
-  } else if (lower.includes('scanner') || lower.includes('vuln')) {
-    colorClass = "bg-orange-900/30 text-orange-200 border-orange-900/50";
-    Icon = SearchCode;
-  }
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+
+    const index = Math.abs(hash) % colors.length;
+    return colors[index];
+  };
+
+  const colorClass = getColor(category || 'default');
+
+  // Icon mapping (optional, keep basic logic or just use generic)
+  let Icon = Globe;
+  const lower = (category || '').toLowerCase();
+
+  if (lower.includes('threat') || lower.includes('intel') || lower.includes('sicurezza')) Icon = Shield;
+  else if (lower.includes('server') || lower.includes('asset') || lower.includes('host')) Icon = Server;
+  else if (lower.includes('code') || lower.includes('dev') || lower.includes('git')) Icon = Code;
+  else if (lower.includes('wifi') || lower.includes('net')) Icon = Wifi;
+  else if (lower.includes('scan') || lower.includes('vuln')) Icon = SearchCode;
+  else if (lower.includes('osint') || lower.includes('social')) Icon = UserIcon;
+  else if (lower.includes('cloud') || lower.includes('aws')) Icon = Cloud;
 
   return (
     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}>
@@ -547,187 +571,188 @@ export default function App() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
-        {/* Actions Bar: Search, Filter & Add */}
-        <div className="grid lg:grid-cols-2 gap-6">
+        {/* Actions Bar: Search, Filter & Add - STICKY WRAPPER */}
+        <div className="sticky top-[73px] z-30 bg-[#09090b]/95 backdrop-blur-md py-4 border-b border-gray-800/50 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 transition-all shadow-sm">
+          <div className="grid lg:grid-cols-2 gap-6">
 
-          {/* Search & Filter Row */}
-          <div className="flex gap-2">
-            {/* Smart Search */}
-            <div className="bg-[#18181b] p-1.5 rounded-xl border border-gray-800 flex items-center shadow-lg relative flex-1">
-              <div className="pl-3 pr-2 text-gray-500">
-                {isAiSearch ? <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" /> : <Search className="w-5 h-5" />}
+            {/* Search & Filter Row */}
+            <div className="flex gap-2">
+              {/* Smart Search */}
+              <div className="bg-[#18181b] p-1.5 rounded-xl border border-gray-800 flex items-center shadow-lg relative flex-1">
+                <div className="pl-3 pr-2 text-gray-500">
+                  {isAiSearch ? <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" /> : <Search className="w-5 h-5" />}
+                </div>
+                <input
+                  type="text"
+                  placeholder={isAiSearch ? "IA: 'Trova scanner wifi...'" : "Cerca..."}
+                  className="flex-1 bg-transparent border-none outline-none text-gray-200 placeholder-gray-500 text-sm h-10 w-full min-w-0"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <button
+                  onClick={() => setIsAiSearch(!isAiSearch)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all border shrink-0 ${isAiSearch
+                    ? "bg-emerald-900/30 text-emerald-400 border-emerald-800"
+                    : "bg-gray-800 text-gray-400 border-gray-700 hover:text-gray-200"
+                    }`}
+                >
+                  {isAiSearch ? 'IA ON' : 'IA OFF'}
+                </button>
               </div>
-              <input
-                type="text"
-                placeholder={isAiSearch ? "IA: 'Trova scanner wifi...'" : "Cerca..."}
-                className="flex-1 bg-transparent border-none outline-none text-gray-200 placeholder-gray-500 text-sm h-10 w-full min-w-0"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+
+              {/* Category Filter Dropdown */}
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Filter className="h-4 w-4 text-gray-500" />
+                </div>
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  className="h-full pl-9 pr-4 bg-[#18181b] border border-gray-800 text-gray-300 text-sm rounded-xl focus:ring-emerald-500 focus:border-emerald-500 block w-full appearance-none outline-none cursor-pointer hover:bg-[#202023]"
+                >
+                  <option value="">Tutte le categorie</option>
+                  {availableCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* AI Add */}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  value={newUrl}
+                  onChange={(e) => setNewUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddLink()}
+                  className="w-full h-full bg-[#18181b] border border-gray-800 rounded-xl pl-4 pr-4 text-sm text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
+                  placeholder="Incolla URL (Analisi Automatica)..."
+                />
+              </div>
               <button
-                onClick={() => setIsAiSearch(!isAiSearch)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all border shrink-0 ${isAiSearch
-                  ? "bg-emerald-900/30 text-emerald-400 border-emerald-800"
-                  : "bg-gray-800 text-gray-400 border-gray-700 hover:text-gray-200"
-                  }`}
+                onClick={handleAddLink}
+                className="px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
               >
-                {isAiSearch ? 'IA ON' : 'IA OFF'}
+                <Plus className="w-5 h-5" />
+                <span className="hidden sm:inline">Aggiungi</span>
               </button>
             </div>
+          </div>
 
-            {/* Category Filter Dropdown */}
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Filter className="h-4 w-4 text-gray-500" />
-              </div>
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="h-full pl-9 pr-4 bg-[#18181b] border border-gray-800 text-gray-300 text-sm rounded-xl focus:ring-emerald-500 focus:border-emerald-500 block w-full appearance-none outline-none cursor-pointer hover:bg-[#202023]"
-              >
-                <option value="">Tutte le categorie</option>
-                {availableCategories.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
+          {/* Results Info */}
+          <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
+            <div className="flex items-center gap-4">
+              <span>{filteredLinks.length} Strumenti Cloud</span>
+              {cooldownDisplay && (
+                <span className="flex items-center gap-1 text-orange-400 normal-case">
+                  <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
+                </span>
+              )}
+              {!cooldownDisplay && (isQueueProcessing || links.some(l => l.aiProcessingStatus === 'pending')) && (
+                <span className="flex items-center gap-1 text-emerald-500 normal-case">
+                  <Loader2 className={`w-3 h-3 ${isQueueProcessing ? 'animate-spin' : 'opacity-50'}`} />
+                  {isQueueProcessing ? 'Analisi Cloud in corso...' : 'In attesa di analisi...'}
+                </span>
+              )}
+              {links.filter(l => l.aiProcessingStatus === 'queued').length > 0 && (
+                <span className="flex items-center gap-1 text-yellow-500 normal-case">
+                  <Clock className="w-3 h-3" /> {links.filter(l => l.aiProcessingStatus === 'queued').length} in coda
+                </span>
+              )}
             </div>
-          </div>
-
-          {/* AI Add */}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                value={newUrl}
-                onChange={(e) => setNewUrl(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddLink()}
-                className="w-full h-full bg-[#18181b] border border-gray-800 rounded-xl pl-4 pr-4 text-sm text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
-                placeholder="Incolla URL (Analisi Automatica)..."
-              />
-            </div>
-            <button
-              onClick={handleAddLink}
-              className="px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              <span className="hidden sm:inline">Aggiungi</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Results Info */}
-        <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
-          <div className="flex items-center gap-4">
-            <span>{filteredLinks.length} Strumenti Cloud</span>
-            {cooldownDisplay && (
-              <span className="flex items-center gap-1 text-orange-400 normal-case">
-                <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
-              </span>
-            )}
-            {!cooldownDisplay && (isQueueProcessing || links.some(l => l.aiProcessingStatus === 'pending')) && (
-              <span className="flex items-center gap-1 text-emerald-500 normal-case">
-                <Loader2 className={`w-3 h-3 ${isQueueProcessing ? 'animate-spin' : 'opacity-50'}`} />
-                {isQueueProcessing ? 'Analisi Cloud in corso...' : 'In attesa di analisi...'}
-              </span>
-            )}
-            {links.filter(l => l.aiProcessingStatus === 'queued').length > 0 && (
-              <span className="flex items-center gap-1 text-yellow-500 normal-case">
-                <Clock className="w-3 h-3" /> {links.filter(l => l.aiProcessingStatus === 'queued').length} in coda
+            {(searchQuery || categoryFilter) && (
+              <span>
+                Filtri: {categoryFilter ? categoryFilter : 'Tutti'} • {isAiSearch ? 'Semantico' : 'Keyword'}
               </span>
             )}
           </div>
-          {(searchQuery || categoryFilter) && (
-            <span>
-              Filtri: {categoryFilter ? categoryFilter : 'Tutti'} • {isAiSearch ? 'Semantico' : 'Keyword'}
-            </span>
-          )}
-        </div>
 
-        {/* Grid List */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredLinks.map((link) => (
-            <div key={link.id} className="group bg-[#18181b] hover:bg-[#202023] border border-gray-800 hover:border-gray-700 rounded-xl p-5 transition-all duration-200 flex flex-col shadow-sm relative overflow-hidden">
+          {/* Grid List */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredLinks.map((link) => (
+              <div key={link.id} className="group bg-[#18181b] hover:bg-[#202023] border border-gray-800 hover:border-gray-700 rounded-xl p-5 transition-all duration-200 flex flex-col shadow-sm relative overflow-hidden">
 
-              {/* AI Processing Status Indicator */}
-              {link.aiProcessingStatus === 'processing' && (
-                <div className="absolute top-0 right-0 p-2">
-                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-                </div>
-              )}
-              {link.aiProcessingStatus === 'pending' && (
-                <div className="absolute top-0 right-0 p-2">
-                  <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="In coda per IA"></div>
-                </div>
-              )}
-              {link.aiProcessingStatus === 'queued' && (
-                <div className="absolute top-0 right-0 p-2" title="In attesa - API rate limited">
-                  <Clock className="w-4 h-4 text-yellow-500" />
-                </div>
-              )}
-
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400 font-bold text-xs border border-gray-700">
-                    {link.name.substring(0, 2).toUpperCase()}
+                {/* AI Processing Status Indicator */}
+                {link.aiProcessingStatus === 'processing' && (
+                  <div className="absolute top-0 right-0 p-2">
+                    <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
                   </div>
-                  <div>
-                    <h3 className="text-gray-200 font-semibold leading-tight group-hover:text-emerald-400 transition-colors">
-                      {link.name}
-                    </h3>
-                  </div>
-                </div>
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  <button onClick={() => setEditingLink(link)} className="text-gray-500 hover:text-blue-400 p-1 bg-gray-900/50 rounded" title="Modifica">
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => handleDelete(link.id)} className="text-gray-500 hover:text-red-400 p-1 bg-gray-900/50 rounded" title="Elimina">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Sezione descrizione */}
-              <div className="flex-1 mb-4">
-                <p className={`text-sm line-clamp-3 ${link.aiProcessingStatus === 'pending' || link.aiProcessingStatus === 'processing' ? 'text-gray-500 italic' : 'text-gray-400'}`}>
-                  {link.description || 'Nessuna descrizione.'}
-                </p>
-                {link.aiProcessingStatus === 'error' && (
-                  <p className="text-xs text-red-400 mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Errore analisi IA (Riproverà)
-                  </p>
                 )}
-              </div>
+                {link.aiProcessingStatus === 'pending' && (
+                  <div className="absolute top-0 right-0 p-2">
+                    <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="In coda per IA"></div>
+                  </div>
+                )}
+                {link.aiProcessingStatus === 'queued' && (
+                  <div className="absolute top-0 right-0 p-2" title="In attesa - API rate limited">
+                    <Clock className="w-4 h-4 text-yellow-500" />
+                  </div>
+                )}
 
-              <div className="flex flex-wrap gap-2 mb-4">
-                <CategoryBadge category={link.category} />
-                {link.tags?.slice(0, 3).map(tag => (
-                  <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-800 text-gray-500 bg-gray-900/50">
-                    #{tag}
-                  </span>
-                ))}
-              </div>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400 font-bold text-xs border border-gray-700">
+                      {link.name.substring(0, 2).toUpperCase()}
+                    </div>
+                    <div>
+                      <h3 className="text-gray-200 font-semibold leading-tight group-hover:text-emerald-400 transition-colors">
+                        {link.name}
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                    <button onClick={() => setEditingLink(link)} className="text-gray-500 hover:text-blue-400 p-1 bg-gray-900/50 rounded" title="Modifica">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => handleDelete(link.id)} className="text-gray-500 hover:text-red-400 p-1 bg-gray-900/50 rounded" title="Elimina">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
 
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-auto w-full flex items-center justify-center gap-2 py-2 bg-gray-900/50 hover:bg-gray-800 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-400 transition-all"
-              >
-                <ExternalLink className="w-3 h-3" />
-                Apri Strumento
-              </a>
-            </div>
-          ))}
+                {/* Sezione descrizione */}
+                <div className="flex-1 mb-4">
+                  <p className={`text-sm line-clamp-3 ${link.aiProcessingStatus === 'pending' || link.aiProcessingStatus === 'processing' ? 'text-gray-500 italic' : 'text-gray-400'}`}>
+                    {link.description || 'Nessuna descrizione.'}
+                  </p>
+                  {link.aiProcessingStatus === 'error' && (
+                    <p className="text-xs text-red-400 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Errore analisi IA (Riproverà)
+                    </p>
+                  )}
+                </div>
 
-          {filteredLinks.length === 0 && (
-            <div className="col-span-full py-20 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-800/50 mb-4">
-                <Search className="w-6 h-6 text-gray-600" />
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <CategoryBadge category={link.category} />
+                  {link.tags?.slice(0, 3).map(tag => (
+                    <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-800 text-gray-500 bg-gray-900/50">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-auto w-full flex items-center justify-center gap-2 py-2 bg-gray-900/50 hover:bg-gray-800 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-400 transition-all"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Apri Strumento
+                </a>
               </div>
-              <h3 className="text-gray-300 font-medium">Nessuno strumento nel Cloud</h3>
-              <p className="text-gray-500 text-sm mt-1">Aggiungi il tuo primo strumento per iniziare.</p>
-            </div>
-          )}
-        </div>
+            ))}
+
+            {filteredLinks.length === 0 && (
+              <div className="col-span-full py-20 text-center">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-800/50 mb-4">
+                  <Search className="w-6 h-6 text-gray-600" />
+                </div>
+                <h3 className="text-gray-300 font-medium">Nessuno strumento nel Cloud</h3>
+                <p className="text-gray-500 text-sm mt-1">Aggiungi il tuo primo strumento per iniziare.</p>
+              </div>
+            )}
+          </div>
 
       </main>
 
