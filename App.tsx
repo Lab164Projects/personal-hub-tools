@@ -638,121 +638,121 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
 
-          {/* Results Info */}
-          <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
-            <div className="flex items-center gap-4">
-              <span>{filteredLinks.length} Strumenti Cloud</span>
-              {cooldownDisplay && (
-                <span className="flex items-center gap-1 text-orange-400 normal-case">
-                  <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
-                </span>
-              )}
-              {!cooldownDisplay && (isQueueProcessing || links.some(l => l.aiProcessingStatus === 'pending')) && (
-                <span className="flex items-center gap-1 text-emerald-500 normal-case">
-                  <Loader2 className={`w-3 h-3 ${isQueueProcessing ? 'animate-spin' : 'opacity-50'}`} />
-                  {isQueueProcessing ? 'Analisi Cloud in corso...' : 'In attesa di analisi...'}
-                </span>
-              )}
-              {links.filter(l => l.aiProcessingStatus === 'queued').length > 0 && (
-                <span className="flex items-center gap-1 text-yellow-500 normal-case">
-                  <Clock className="w-3 h-3" /> {links.filter(l => l.aiProcessingStatus === 'queued').length} in coda
-                </span>
-              )}
-            </div>
-            {(searchQuery || categoryFilter) && (
-              <span>
-                Filtri: {categoryFilter ? categoryFilter : 'Tutti'} • {isAiSearch ? 'Semantico' : 'Keyword'}
+        {/* Results Info */}
+        <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
+          <div className="flex items-center gap-4">
+            <span>{filteredLinks.length} Strumenti Cloud</span>
+            {cooldownDisplay && (
+              <span className="flex items-center gap-1 text-orange-400 normal-case">
+                <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
+              </span>
+            )}
+            {!cooldownDisplay && (isQueueProcessing || links.some(l => l.aiProcessingStatus === 'pending')) && (
+              <span className="flex items-center gap-1 text-emerald-500 normal-case">
+                <Loader2 className={`w-3 h-3 ${isQueueProcessing ? 'animate-spin' : 'opacity-50'}`} />
+                {isQueueProcessing ? 'Analisi Cloud in corso...' : 'In attesa di analisi...'}
+              </span>
+            )}
+            {links.filter(l => l.aiProcessingStatus === 'queued').length > 0 && (
+              <span className="flex items-center gap-1 text-yellow-500 normal-case">
+                <Clock className="w-3 h-3" /> {links.filter(l => l.aiProcessingStatus === 'queued').length} in coda
               </span>
             )}
           </div>
+          {(searchQuery || categoryFilter) && (
+            <span>
+              Filtri: {categoryFilter ? categoryFilter : 'Tutti'} • {isAiSearch ? 'Semantico' : 'Keyword'}
+            </span>
+          )}
+        </div>
 
-          {/* Grid List */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredLinks.map((link) => (
-              <div key={link.id} className="group bg-[#18181b] hover:bg-[#202023] border border-gray-800 hover:border-gray-700 rounded-xl p-5 transition-all duration-200 flex flex-col shadow-sm relative overflow-hidden">
+        {/* Grid List */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredLinks.map((link) => (
+            <div key={link.id} className="group bg-[#18181b] hover:bg-[#202023] border border-gray-800 hover:border-gray-700 rounded-xl p-5 transition-all duration-200 flex flex-col shadow-sm relative overflow-hidden">
 
-                {/* AI Processing Status Indicator */}
-                {link.aiProcessingStatus === 'processing' && (
-                  <div className="absolute top-0 right-0 p-2">
-                    <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-                  </div>
-                )}
-                {link.aiProcessingStatus === 'pending' && (
-                  <div className="absolute top-0 right-0 p-2">
-                    <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="In coda per IA"></div>
-                  </div>
-                )}
-                {link.aiProcessingStatus === 'queued' && (
-                  <div className="absolute top-0 right-0 p-2" title="In attesa - API rate limited">
-                    <Clock className="w-4 h-4 text-yellow-500" />
-                  </div>
-                )}
+              {/* AI Processing Status Indicator */}
+              {link.aiProcessingStatus === 'processing' && (
+                <div className="absolute top-0 right-0 p-2">
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                </div>
+              )}
+              {link.aiProcessingStatus === 'pending' && (
+                <div className="absolute top-0 right-0 p-2">
+                  <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="In coda per IA"></div>
+                </div>
+              )}
+              {link.aiProcessingStatus === 'queued' && (
+                <div className="absolute top-0 right-0 p-2" title="In attesa - API rate limited">
+                  <Clock className="w-4 h-4 text-yellow-500" />
+                </div>
+              )}
 
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400 font-bold text-xs border border-gray-700">
-                      {link.name.substring(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <h3 className="text-gray-200 font-semibold leading-tight group-hover:text-emerald-400 transition-colors">
-                        {link.name}
-                      </h3>
-                    </div>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400 font-bold text-xs border border-gray-700">
+                    {link.name.substring(0, 2).toUpperCase()}
                   </div>
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                    <button onClick={() => setEditingLink(link)} className="text-gray-500 hover:text-blue-400 p-1 bg-gray-900/50 rounded" title="Modifica">
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => handleDelete(link.id)} className="text-gray-500 hover:text-red-400 p-1 bg-gray-900/50 rounded" title="Elimina">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                  <div>
+                    <h3 className="text-gray-200 font-semibold leading-tight group-hover:text-emerald-400 transition-colors">
+                      {link.name}
+                    </h3>
                   </div>
                 </div>
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                  <button onClick={() => setEditingLink(link)} className="text-gray-500 hover:text-blue-400 p-1 bg-gray-900/50 rounded" title="Modifica">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => handleDelete(link.id)} className="text-gray-500 hover:text-red-400 p-1 bg-gray-900/50 rounded" title="Elimina">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
 
-                {/* Sezione descrizione */}
-                <div className="flex-1 mb-4">
-                  <p className={`text-sm line-clamp-3 ${link.aiProcessingStatus === 'pending' || link.aiProcessingStatus === 'processing' ? 'text-gray-500 italic' : 'text-gray-400'}`}>
-                    {link.description || 'Nessuna descrizione.'}
+              {/* Sezione descrizione */}
+              <div className="flex-1 mb-4">
+                <p className={`text-sm line-clamp-3 ${link.aiProcessingStatus === 'pending' || link.aiProcessingStatus === 'processing' ? 'text-gray-500 italic' : 'text-gray-400'}`}>
+                  {link.description || 'Nessuna descrizione.'}
+                </p>
+                {link.aiProcessingStatus === 'error' && (
+                  <p className="text-xs text-red-400 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Errore analisi IA (Riproverà)
                   </p>
-                  {link.aiProcessingStatus === 'error' && (
-                    <p className="text-xs text-red-400 mt-1 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" /> Errore analisi IA (Riproverà)
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <CategoryBadge category={link.category} />
-                  {link.tags?.slice(0, 3).map(tag => (
-                    <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-800 text-gray-500 bg-gray-900/50">
-                      #{tag}
-                    </span>
-                  ))}
-                </div>
-
-                <a
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-auto w-full flex items-center justify-center gap-2 py-2 bg-gray-900/50 hover:bg-gray-800 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-400 transition-all"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Apri Strumento
-                </a>
+                )}
               </div>
-            ))}
 
-            {filteredLinks.length === 0 && (
-              <div className="col-span-full py-20 text-center">
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-800/50 mb-4">
-                  <Search className="w-6 h-6 text-gray-600" />
-                </div>
-                <h3 className="text-gray-300 font-medium">Nessuno strumento nel Cloud</h3>
-                <p className="text-gray-500 text-sm mt-1">Aggiungi il tuo primo strumento per iniziare.</p>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <CategoryBadge category={link.category} />
+                {link.tags?.slice(0, 3).map(tag => (
+                  <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-800 text-gray-500 bg-gray-900/50">
+                    #{tag}
+                  </span>
+                ))}
               </div>
+
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-auto w-full flex items-center justify-center gap-2 py-2 bg-gray-900/50 hover:bg-gray-800 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-400 transition-all"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Apri Strumento
+              </a>
+            </div>
+          ))}
+
+          {filteredLinks.length === 0 && (
+            <div className="col-span-full py-20 text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-800/50 mb-4">
+                <Search className="w-6 h-6 text-gray-600" />
               </div>
-            )}
+              <h3 className="text-gray-300 font-medium">Nessuno strumento nel Cloud</h3>
+              <p className="text-gray-500 text-sm mt-1">Aggiungi il tuo primo strumento per iniziare.</p>
+            </div>
+          )}
         </div>
 
       </main>
