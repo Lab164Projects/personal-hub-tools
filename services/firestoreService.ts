@@ -8,7 +8,9 @@ import {
     doc,
     query,
     orderBy,
-    setDoc
+    setDoc,
+    writeBatch,
+    getDocs
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { LinkItem } from "../types";
@@ -53,6 +55,7 @@ export const deleteLink = async (userId: string, linkId: string) => {
 };
 
 // Batch import (for migration)
+// Batch import (for migration)
 export const batchImportLinks = async (userId: string, links: LinkItem[]) => {
     const promises = links.map(link => {
         // Use setDoc with specific ID if preserving IDs is important, or addDoc
@@ -61,4 +64,21 @@ export const batchImportLinks = async (userId: string, links: LinkItem[]) => {
         return setDoc(linkRef, data);
     });
     await Promise.all(promises);
+};
+
+export const deleteAllLinks = async (userId: string): Promise<void> => {
+    try {
+        const q = query(getUserLinksCollection(userId));
+        const snapshot = await getDocs(q);
+
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((doc) => {
+            batch.delete(doc.ref);
+        });
+
+        await batch.commit();
+    } catch (error) {
+        console.error("Error wiping database:", error);
+        throw error;
+    }
 };

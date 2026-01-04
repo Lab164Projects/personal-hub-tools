@@ -13,6 +13,15 @@ const firebaseConfig = {
     measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
+// Safety Check
+if (!firebaseConfig.apiKey) {
+    console.error("FIREBASE CONFIG MISSING: Check .env.local");
+    if (typeof window !== "undefined") {
+        document.body.innerHTML = '<div style="color:red; padding:20px; font-family:sans-serif;"><h1>Configuration Error</h1><p>Firebase API Key missing. Please config .env.local</p></div>';
+    }
+    throw new Error("Firebase API Key is missing");
+}
+
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();

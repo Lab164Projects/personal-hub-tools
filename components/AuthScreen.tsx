@@ -26,16 +26,18 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     setLoading(true);
     setError('');
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-      onAuthenticated({
-        email: user.email || '',
-        isSetup: true,
-        // No password hash needed locally
-      });
+      // Use signInWithPopup - ensure authorized domains in Firebase Console
+      await signInWithPopup(auth, googleProvider);
+      // Note: onAuthStateChanged in App.tsx will handle the rest.
     } catch (err: any) {
       console.error("Google Auth Error:", err);
-      setError(err.message || "Errore login Google");
+      if (err.code === 'auth/popup-closed-by-user') {
+        setError("Login annullato (finestra chiusa).");
+      } else if (err.code === 'auth/unauthorised-domain') {
+        setError("Dominio non autorizzato su Firebase Console.");
+      } else {
+        setError(err.message || "Errore login Google. Riprova o controlla la console.");
+      }
     } finally {
       setLoading(false);
     }

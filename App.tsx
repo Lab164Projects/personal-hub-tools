@@ -4,16 +4,17 @@ import {
   ExternalLink, Server, Globe, Shield, Wifi, Code,
   RotateCcw, Save, SearchCode, Cpu, Loader2,
   Pencil, AlertCircle, User as UserIcon, Filter, Cloud,
-  Clock, PauseCircle
+  Clock, PauseCircle, LogIn
 } from 'lucide-react';
 import { LinkItem, AiStatus, UserConfig } from './types';
-import { enrichLinkData, semanticSearch } from './services/geminiService';
+import { enrichLinkData, semanticSearch, enrichLinksBatch } from './services/geminiService';
 import {
   subscribeToLinks,
   addLink,
   updateLink,
   deleteLink,
-  batchImportLinks
+  batchImportLinks,
+  deleteAllLinks
 } from './services/firestoreService';
 import { auth } from './services/firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
@@ -164,79 +165,111 @@ export default function App() {
   }, [rateLimitState.isInCooldown, rateLimitState.cooldownUntil]);
 
   // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
-  // Note: We need to handle AI updates via Firestore now!
   useEffect(() => {
     if (!user || isQueueProcessing) return;
 
-    // Check if in cooldown - mark pending items as queued
+    // STOP IMMEDIATELY if in cooldown. Do not write to Firestore.
+    // The UI handles the visual indication of "Queued" or "Cooldown".
     if (rateLimitState.isInCooldown) {
-      const itemsToQueue = links.filter(l => l.aiProcessingStatus === 'pending');
-      itemsToQueue.forEach(l => {
-        updateLink(user.uid, { ...l, aiProcessingStatus: 'queued' });
-      });
       return;
     }
 
-    // Check for pending or queued items
-    const pendingItem = links.find(l =>
-      l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued'
-    );
-    if (!pendingItem) return;
-
-    // Check rate limit before making request
+    // Double check rate limit state before firing
     if (!canMakeRequest(rateLimitState)) {
-      console.log('Rate limit reached, waiting...');
+      console.log('Rate limit reached (check), waiting...');
       return;
     }
 
     const timer = setTimeout(async () => {
-      setIsQueueProcessing(true);
-      // NOTE: Optimistic updates are tricky with Firestore if we don't want flicker.
-      // We will just process and then update the doc.
-      // Or we can set 'processing' status on the doc.
-      await updateLink(user.uid, { ...pendingItem, aiProcessingStatus: 'processing' });
+      // Re-check inside timeout
+      if (rateLimitState.isInCooldown) return;
 
-      // Record this request
+      // GET BATCH (Max 3 items)
+      const batchItems = links
+        .filter(l => l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued')
+        .slice(0, 3);
+
+      if (batchItems.length === 0) return;
+
+      setIsQueueProcessing(true);
+
+      // Mark batch as processing
+      for (const item of batchItems) {
+        await updateLink(user.uid, { ...item, aiProcessingStatus: 'processing' });
+      }
+
       setRateLimitState(prev => recordRequest(prev));
 
       try {
-        const enrichment = await enrichLinkData(pendingItem.name, pendingItem.url);
+        const itemsPayload = batchItems.map(item => ({
+          id: item.id,
+          name: item.name,
+          url: item.url,
+          currentDescription: item.description
+        }));
 
-        const updated = {
-          ...pendingItem,
-          description: enrichment.description || pendingItem.description,
-          category: enrichment.category || pendingItem.category,
-          tags: enrichment.tags || pendingItem.tags,
-          aiProcessingStatus: 'done' as const
-        };
+        const results = await enrichLinksBatch(itemsPayload);
 
-        await updateLink(user.uid, updated);
+        // Process results
+        for (const item of batchItems) {
+          const result = results[item.id];
 
-        // Record success
+          let newDesc = item.description;
+          let newCat = item.category;
+          let newTags = item.tags;
+          let newStatus: 'done' | 'error' = 'done';
+
+          if (result) {
+            const isAiError = result.description?.includes("non disponibile") || result.category?.includes("Errore");
+
+            if (!isAiError) {
+              // SIMPLIFIED LOGIC: Always use AI result if available and valid.
+              if (result.description && result.description.length > 5) {
+                newDesc = result.description;
+              }
+
+              newCat = (result.category && result.category !== "Non categorizzato") ? result.category : item.category;
+              newTags = (result.tags && result.tags.length > 0) ? result.tags : item.tags;
+            } else {
+              // AI returned error-like text. Mark as done but keep original.
+              newStatus = 'done';
+            }
+          } else {
+            newStatus = 'error';
+          }
+
+          const updated = {
+            ...item,
+            description: newDesc,
+            category: newCat,
+            tags: newTags,
+            aiProcessingStatus: newStatus
+          };
+          await updateLink(user.uid, updated);
+        }
+
         setRateLimitState(prev => recordSuccess(prev));
-        if (queueDelay > 6000) setQueueDelay(6000);
+        if (queueDelay > 4000) setQueueDelay(4000);
 
       } catch (error: any) {
-        console.error("Failed to enrich", pendingItem.name, error);
+        console.error("Batch Enrichment Failed:", error);
 
-        // Check if it's a rate limit error (429)
-        const isRateLimitError = error?.message?.includes('429') ||
-          error?.message?.toLowerCase().includes('rate') ||
-          error?.message?.toLowerCase().includes('quota');
+        const isRateLimit = error?.message?.includes('429') ||
+          error?.message?.toLowerCase().includes('rate');
 
-        // Record error and potentially trigger cooldown
-        setRateLimitState(prev => recordError(prev, isRateLimitError));
+        setRateLimitState(prev => recordError(prev, isRateLimit));
 
-        // Mark as queued if rate limited, otherwise error
-        const newStatus = isRateLimitError ? 'queued' : 'error';
+        // Revert status
+        for (const item of batchItems) {
+          await updateLink(user.uid, {
+            ...item,
+            aiProcessingStatus: isRateLimit ? 'queued' : 'error',
+            lastErrorAt: Date.now()
+          });
+        }
 
-        await updateLink(user.uid, {
-          ...pendingItem,
-          aiProcessingStatus: newStatus,
-          lastErrorAt: Date.now()
-        });
+        if (!isRateLimit) setQueueDelay(prev => Math.min(prev * 2, 60000));
 
-        setQueueDelay(prev => Math.min(prev * 2, 60000));
       } finally {
         setIsQueueProcessing(false);
       }
@@ -371,24 +404,46 @@ export default function App() {
 
   const handleImport = async (importedData: any[], mode: 'merge' | 'replace') => {
     if (!user) return;
-    const processed: LinkItem[] = importedData.map((item: any) => ({
-      id: item.id || crypto.randomUUID(),
-      name: item.name || 'Sconosciuto',
-      url: item.url || '#',
-      category: item.category || 'Non categorizzato',
-      description: item.description || 'In attesa di analisi...',
-      tags: item.tags || [],
-      addedAt: item.addedAt || Date.now(),
-      aiProcessingStatus: ((item.description && item.category !== 'Non categorizzato') ? 'done' : 'pending') as 'done' | 'pending'
-    }));
+
+    const cleanImportUrl = (rawUrl: string): string => {
+      if (!rawUrl) return '#';
+      // Handle Markdown links [text](url) -> url
+      const mdMatch = rawUrl.match(/\[.*?\]\((.*?)\)/);
+      if (mdMatch && mdMatch[1]) return mdMatch[1].trim();
+      // Handle potential bare brackets/parens if user just pasted weirdly
+      return rawUrl.replace(/[\[\]\(\)]/g, '').trim();
+    };
+
+    const processed: LinkItem[] = importedData.map((item: any) => {
+      const cleanedUrl = cleanImportUrl(item.url);
+      return {
+        id: item.id || crypto.randomUUID(),
+        name: item.name || 'Sconosciuto',
+        url: cleanedUrl,
+        category: item.category || 'Non categorizzato',
+        description: item.description || 'In attesa di analisi...',
+        tags: item.tags || [],
+        addedAt: item.addedAt || Date.now(),
+        aiProcessingStatus: ((item.description && item.category !== 'Non categorizzato') ? 'done' : 'pending') as 'done' | 'pending'
+      };
+    });
 
     if (mode === 'replace') {
-      if (!confirm("ATTENZIONE: Questo cancellerà TUTTI i link esistenti nel Cloud. Procedere?")) return;
-      // Delete all current first? Expensive. 
-      // Better to just merge or warn. For now let's just do batch add.
-      await batchImportLinks(user.uid, processed);
-      alert("Importato (Modalità Append - Per sicurezza il replace totale non è attivo per ora).");
-    } else {
+      if (!confirm("ATTENZIONE: Stai per cancellare TUTTO il database Cloud e sostituirlo con questo backup.\n\nQuesta azione è IRREVERSIBILE.\n\nVuoi procedere?")) return;
+
+      setLoadingLinks(true);
+      try {
+        // 1. Wipe existing
+        await deleteAllLinks(user.uid);
+        // 2. Import new
+        await batchImportLinks(user.uid, processed);
+        alert("Backup ripristinato con successo (Database sostituito).");
+      } catch (e) {
+        console.error("Replace Error:", e);
+        alert("Errore durante il ripristino. Riprova.");
+      } finally {
+        setLoadingLinks(false);
+      }
       const currentUrls = new Set(links.map(l => normalizeUrl(l.url)));
       const newItems = processed.filter((l: LinkItem) => !currentUrls.has(normalizeUrl(l.url)));
 
@@ -430,6 +485,18 @@ export default function App() {
           onClose={() => setShowProfileModal(false)}
           currentUser={{ email: user.email || '', isSetup: true }}
           onUpdateUser={() => { }}
+          onWipeDatabase={async () => {
+            if (confirm("SEI SICURO? Cancellare TUTTO l'archivio Cloud?\nQuesta operazione non può essere annullata.")) {
+              try {
+                await deleteAllLinks(user.uid);
+                alert("Database Cloud formattato con successo.");
+                setShowProfileModal(false);
+              } catch (e) {
+                console.error(e);
+                alert("Errore durante la cancellazione.");
+              }
+            }
+          }}
         />
       )}
 
@@ -468,9 +535,9 @@ export default function App() {
               <button onClick={handleExport} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all" title="Esporta JSON">
                 <Download className="w-5 h-5" />
               </button>
-              <div className="w-px h-6 bg-gray-800 mx-1"></div>
-              <button onClick={() => { if (confirm("Uscire dal sistema?")) signOut(auth); }} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all" title="Logout">
-                <RotateCcw className="w-5 h-5" />
+              <button onClick={() => { if (confirm("Uscire dal sistema?")) signOut(auth); }} className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-900/10 rounded-lg transition-all flex items-center gap-2" title="Logout">
+                <LogIn className="w-5 h-5 rotate-180" />
+                <span className="text-xs hidden lg:inline">Esci</span>
               </button>
             </div>
           </div>

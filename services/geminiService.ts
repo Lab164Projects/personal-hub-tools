@@ -2,7 +2,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
 
-const API_KEY = process.env.API_KEY || '';
+// Accesso alla chiave configurata in .env.local
+const API_KEY = import.meta.env.GEMINI_API_KEY || "";
 
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
@@ -70,14 +71,62 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
     setCachedData(cacheKey, result);
     return result;
 
+  } catch (error: any) {
+    console.error("Errore Gemini:", error);
+    throw error;
+  }
+};
+
+/**
+ * BATCH ENRICHMENT
+ * Processes up to 5 links in a single API call to save quota.
+ */
+export const enrichLinksBatch = async (items: { id: string, name: string, url: string, currentDescription?: string }[]): Promise<Record<string, Partial<LinkItem>>> => {
+  if (items.length === 0) return {};
+
+  const ai = getAiClient();
+
+  // Construct a batch prompt
+  const itemsText = items.map((item, index) =>
+    `Item ${index}: ID="${item.id}", Name="${item.name}", URL="${item.url}", CurrentDescription="${item.currentDescription || ''}"`
+  ).join('\n\n');
+
+  const prompt = `Sei un esperto di Cyber Security. Il tuo compito è analizzare, classificare e migliorare le descrizioni di questi strumenti.
+  
+  INPUT DATA:
+  ${itemsText}
+
+  REQURIEMENTS PER OGNI ITEM:
+  1. Analizza l'URL e il nome.
+  2. Se "CurrentDescription" è presente e valida, RIELABORALA per renderla più professionale e concisa (max 25 parole).
+  3. Se "CurrentDescription" è vuota o inutile (es. "fallback", "error"), GENERALA da zero basandoti sul tool.
+  4. Assegna una Categoria precisa (Security, Network, Dev, OSINT, etc.).
+  5. Genera 3-5 tag tecnici.
+
+  OUTPUT:
+  Restituisci un UNICO oggetto JSON dove le chiavi sono gli ID degli item e i valori sono oggetti con { category, description, tags }.
+  Esempio:
+  {
+    "id_1": { "category": "...", "description": "...", "tags": [...] },
+    "id_2": { ... }
+  }`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Risposta Batch Vuota");
+    return JSON.parse(text);
+
   } catch (error) {
-    console.error("Errore Arricchimento IA:", error);
-    // Fallback se l'IA fallisce
-    return {
-      category: "Non categorizzato (Errore IA)",
-      description: "Descrizione non disponibile al momento.",
-      tags: ["error"],
-    };
+    console.error("Errore Batch Gemini:", error);
+    throw error;
   }
 };
 

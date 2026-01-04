@@ -9,9 +9,11 @@ interface ProfileModalProps {
   onClose: () => void;
   currentUser: UserConfig;
   onUpdateUser: (newConfig: UserConfig) => void;
+  onWipeDatabase: () => void;
 }
 
-const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, currentUser }) => {
+const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, currentUser, onUpdateUser, onWipeDatabase }) => {
+
   const [newPassword, setNewPassword] = useState('');
   const [confirmNew, setConfirmNew] = useState('');
   const [msg, setMsg] = useState<{ type: 'error' | 'success', text: string } | null>(null);
@@ -146,6 +148,20 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, currentUse
                   title="Invia email di reset"
                 >
                   <ExternalLink className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Danger Zone */}
+              <div className="mt-8 pt-6 border-t border-gray-800">
+                <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <AlertTriangle className="w-3 h-3" /> Zona Pericolosa
+                </h3>
+                <button
+                  type="button"
+                  onClick={onWipeDatabase}
+                  className="w-full bg-red-900/10 hover:bg-red-900/30 text-red-400 hover:text-red-300 border border-red-900/30 rounded-lg py-2 text-xs font-medium transition-all"
+                >
+                  Elimina Tutto il Database
                 </button>
               </div>
             </div>
