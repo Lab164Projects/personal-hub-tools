@@ -751,8 +751,9 @@ export default function App() {
                 <h3 className="text-gray-300 font-medium">Nessuno strumento nel Cloud</h3>
                 <p className="text-gray-500 text-sm mt-1">Aggiungi il tuo primo strumento per iniziare.</p>
               </div>
+              </div>
             )}
-          </div>
+        </div>
 
       </main>
 
