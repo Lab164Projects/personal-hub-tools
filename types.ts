@@ -6,7 +6,8 @@ export interface LinkItem {
   description: string;
   tags: string[];
   addedAt: number;
-  aiProcessingStatus?: 'pending' | 'processing' | 'done' | 'error';
+  aiProcessingStatus?: 'pending' | 'processing' | 'done' | 'error' | 'queued';
+  lastErrorAt?: number; // Track when last error occurred for retry logic
 }
 
 export interface ImportStats {
@@ -21,12 +22,14 @@ export enum AiStatus {
   LOADING = 'loading',
   SUCCESS = 'success',
   ERROR = 'error',
+  RATE_LIMITED = 'rate_limited', // New status for rate limit
 }
 
 export interface UserConfig {
   isSetup: boolean;
   email: string;
-  passwordHash: string; // Simple hash/obfuscation for client-side demo
+  passwordHash: string; // SHA-256 hash
+  passwordSalt?: string; // Salt for secure hashing
   googleClientId?: string; // ID Client per Google Drive API
 }
 

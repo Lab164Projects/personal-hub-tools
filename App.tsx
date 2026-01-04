@@ -1,14 +1,26 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Search, Plus, Sparkles, Download, Upload, Trash2,
   ExternalLink, Server, Globe, Shield, Wifi, Code,
   RotateCcw, Save, SearchCode, Cpu, Loader2, CheckCircle2,
-  Pencil, AlertCircle, Settings, User as UserIcon, Filter, Cloud
+  Pencil, AlertCircle, Settings, User as UserIcon, Filter, Cloud,
+  Clock, Zap, PauseCircle
 } from 'lucide-react';
 import { LinkItem, AiStatus, UserConfig } from './types';
 import { DEFAULT_LINKS, STORAGE_KEY } from './constants';
 import { enrichLinkData, semanticSearch } from './services/geminiService';
-import { initGoogleDrive, syncWithDrive } from './services/googleDriveService'; // NEW
+import { initGoogleDrive, syncWithDrive } from './services/googleDriveService';
+import {
+  RateLimitState,
+  loadRateLimitState,
+  canMakeRequest,
+  recordRequest,
+  recordError,
+  recordSuccess,
+  getCooldownRemainingMs,
+  formatCooldownTime,
+} from './services/rateLimitService';
+import { getEnrichmentKey, getCachedData } from './services/cacheService';
 import ImportModal from './components/ImportModal';
 import AuthScreen from './components/AuthScreen';
 import EditModal from './components/EditModal';
@@ -82,6 +94,10 @@ export default function App() {
   const [queueDelay, setQueueDelay] = useState(6000);
   const [isQueueProcessing, setIsQueueProcessing] = useState(false);
 
+  // Rate Limiting State
+  const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => loadRateLimitState());
+  const [cooldownDisplay, setCooldownDisplay] = useState('');
+
   // Drive Sync State
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDriveReady, setIsDriveReady] = useState(false);
@@ -103,16 +119,58 @@ export default function App() {
     }
   }, [isAuthenticated, currentUser?.googleClientId]);
 
-  // --- AUTOMATIC AI QUEUE PROCESSOR ---
+  // --- COOLDOWN TIMER ---
+  useEffect(() => {
+    if (!rateLimitState.isInCooldown) {
+      setCooldownDisplay('');
+      return;
+    }
+
+    const updateCooldown = () => {
+      const remaining = getCooldownRemainingMs(rateLimitState);
+      if (remaining <= 0) {
+        setRateLimitState(prev => ({ ...prev, isInCooldown: false, consecutiveErrors: 0 }));
+        setCooldownDisplay('');
+      } else {
+        setCooldownDisplay(formatCooldownTime(remaining));
+      }
+    };
+
+    updateCooldown();
+    const interval = setInterval(updateCooldown, 1000);
+    return () => clearInterval(interval);
+  }, [rateLimitState.isInCooldown, rateLimitState.cooldownUntil]);
+
+  // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
   useEffect(() => {
     if (!isAuthenticated || isQueueProcessing) return;
 
-    const pendingItem = links.find(l => l.aiProcessingStatus === 'pending');
+    // Check if in cooldown - mark pending items as queued
+    if (rateLimitState.isInCooldown) {
+      setLinks(prev => prev.map(l =>
+        l.aiProcessingStatus === 'pending' ? { ...l, aiProcessingStatus: 'queued' } : l
+      ));
+      return;
+    }
+
+    // Check for pending or queued items
+    const pendingItem = links.find(l =>
+      l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued'
+    );
     if (!pendingItem) return;
+
+    // Check rate limit before making request
+    if (!canMakeRequest(rateLimitState)) {
+      console.log('Rate limit reached, waiting...');
+      return;
+    }
 
     const timer = setTimeout(async () => {
       setIsQueueProcessing(true);
       setLinks(prev => prev.map(l => l.id === pendingItem.id ? { ...l, aiProcessingStatus: 'processing' } : l));
+
+      // Record this request
+      setRateLimitState(prev => recordRequest(prev));
 
       try {
         const enrichment = await enrichLinkData(pendingItem.name, pendingItem.url);
@@ -127,19 +185,38 @@ export default function App() {
             aiProcessingStatus: 'done'
           };
         }));
+
+        // Record success
+        setRateLimitState(prev => recordSuccess(prev));
         if (queueDelay > 6000) setQueueDelay(6000);
 
       } catch (error: any) {
         console.error("Failed to enrich", pendingItem.name, error);
+
+        // Check if it's a rate limit error (429)
+        const isRateLimitError = error?.message?.includes('429') ||
+          error?.message?.toLowerCase().includes('rate') ||
+          error?.message?.toLowerCase().includes('quota');
+
+        // Record error and potentially trigger cooldown
+        setRateLimitState(prev => recordError(prev, isRateLimitError));
+
+        // Mark as queued if rate limited, otherwise error
+        const newStatus = isRateLimitError ? 'queued' : 'error';
+        setLinks(prev => prev.map(l => l.id === pendingItem.id ? {
+          ...l,
+          aiProcessingStatus: newStatus,
+          lastErrorAt: Date.now()
+        } : l));
+
         setQueueDelay(prev => Math.min(prev * 2, 60000));
-        setLinks(prev => prev.map(l => l.id === pendingItem.id ? { ...l, aiProcessingStatus: 'error' } : l));
       } finally {
         setIsQueueProcessing(false);
       }
     }, queueDelay);
 
     return () => clearTimeout(timer);
-  }, [links, isAuthenticated, isQueueProcessing, queueDelay]);
+  }, [links, isAuthenticated, isQueueProcessing, queueDelay, rateLimitState]);
 
   // Handle Search
   useEffect(() => {
@@ -292,8 +369,21 @@ export default function App() {
         setLinks(result.links);
         alert(`Sync completato!\nScaricati e uniti: ${result.mergedCount} nuovi tool.\nDatabase Cloud aggiornato.`);
       }
-    } catch (e) {
-      alert("Errore durante il Sync. Controlla la console o le autorizzazioni popup.");
+    } catch (e: any) {
+      console.error("Sync Error Detailed:", e);
+      let msg = "Errore durante il Sync.";
+
+      if (e?.error === 'popup_closed_by_user') {
+        msg += "\Hai chiuso il popup prima del login.";
+      } else if (e?.error === 'access_denied') {
+        msg += "\nAccesso negato. Hai rifiutato i permessi.";
+      } else if (e?.message) {
+        msg += `\nDettaglio: ${e.message}`;
+      } else if (JSON.stringify(e).includes('origin_mismatch')) {
+        msg += "\nERRORE ORIGINE: Il dominio attuale non è autorizzato nella Google Cloud Console.\nVerifica 'Authorized JavaScript origins'.";
+      }
+
+      alert(msg + "\n\nControlla la console (F12) per i dettagli tecnici.");
     } finally {
       setIsSyncing(false);
     }
@@ -458,9 +548,20 @@ export default function App() {
         <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
           <div className="flex items-center gap-4">
             <span>{filteredLinks.length} Strumenti Visibili</span>
-            {isQueueProcessing && (
+            {cooldownDisplay && (
+              <span className="flex items-center gap-1 text-orange-400 normal-case">
+                <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
+              </span>
+            )}
+            {!cooldownDisplay && (isQueueProcessing || links.some(l => l.aiProcessingStatus === 'pending')) && (
               <span className="flex items-center gap-1 text-emerald-500 normal-case">
-                <Loader2 className="w-3 h-3 animate-spin" /> Elaborazione IA in corso (Delay adattivo: {queueDelay / 1000}s)
+                <Loader2 className={`w-3 h-3 ${isQueueProcessing ? 'animate-spin' : 'opacity-50'}`} />
+                {isQueueProcessing ? 'Analisi in corso...' : 'In attesa di analisi...'}
+              </span>
+            )}
+            {links.filter(l => l.aiProcessingStatus === 'queued').length > 0 && (
+              <span className="flex items-center gap-1 text-yellow-500 normal-case">
+                <Clock className="w-3 h-3" /> {links.filter(l => l.aiProcessingStatus === 'queued').length} in coda
               </span>
             )}
           </div>
@@ -485,6 +586,11 @@ export default function App() {
               {link.aiProcessingStatus === 'pending' && (
                 <div className="absolute top-0 right-0 p-2">
                   <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="In coda per IA"></div>
+                </div>
+              )}
+              {link.aiProcessingStatus === 'queued' && (
+                <div className="absolute top-0 right-0 p-2" title="In attesa - API rate limited">
+                  <Clock className="w-4 h-4 text-yellow-500" />
                 </div>
               )}
 
