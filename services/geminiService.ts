@@ -121,8 +121,22 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
     });
 
     const text = response.text;
+    console.log("Raw Batch AI Response:", text);
     if (!text) throw new Error("Risposta Batch Vuota");
-    return JSON.parse(text);
+
+    // Parse and handle potential casing issues with IDs from AI
+    const rawResult = JSON.parse(text);
+    const normalizedResult: Record<string, Partial<LinkItem>> = {};
+
+    // Ensure we match the original IDs correctly even if AI changed them
+    for (const key in rawResult) {
+      const originalItem = items.find(it => it.id.toLowerCase() === key.toLowerCase());
+      if (originalItem) {
+        normalizedResult[originalItem.id] = rawResult[key];
+      }
+    }
+
+    return normalizedResult;
 
   } catch (error) {
     console.error("Errore Batch Gemini:", error);
