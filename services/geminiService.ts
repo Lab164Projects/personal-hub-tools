@@ -47,7 +47,7 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -113,7 +113,7 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json"
@@ -160,7 +160,7 @@ export const semanticSearch = async (query: string, items: LinkItem[]): Promise<
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -202,7 +202,7 @@ export const repairAndParseJson = async (rawInput: string): Promise<any[]> => {
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
