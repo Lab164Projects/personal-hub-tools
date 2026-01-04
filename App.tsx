@@ -569,7 +569,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <main className="w-full px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
         {/* Actions Bar: Search, Filter & Add - STICKY WRAPPER */}
         <div className="sticky top-[73px] z-30 bg-[#09090b]/95 backdrop-blur-md py-4 border-b border-gray-800/50 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 transition-all shadow-sm">
