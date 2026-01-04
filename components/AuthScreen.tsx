@@ -1,119 +1,88 @@
-import React, { useState, useEffect } from 'react';
-import { AUTH_KEY } from '../constants';
+import React, { useState } from 'react';
 import { UserConfig } from '../types';
-import { ShieldCheck, Lock, Mail, ArrowRight, RefreshCw, AlertTriangle, Info } from 'lucide-react';
-import { hashPassword, generateSalt, verifyPassword } from '../services/cryptoService';
+import {
+  ShieldCheck, Lock, Mail, ArrowRight, AlertTriangle, LogIn
+} from 'lucide-react';
+import {
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail
+} from "firebase/auth";
+import { auth, googleProvider } from '../services/firebase';
 
 interface AuthScreenProps {
   onAuthenticated: (userConfig: UserConfig) => void;
 }
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
-  const [mode, setMode] = useState<'loading' | 'login' | 'setup' | 'reset' | 'reset-confirm'>('loading');
+  const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
-  const [config, setConfig] = useState<UserConfig | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    const saved = localStorage.getItem(AUTH_KEY);
-    if (saved) {
-      setConfig(JSON.parse(saved));
-      setMode('login');
-    } else {
-      setMode('setup');
-    }
-  }, []);
-
-
-
-  const handleSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password || !confirmPassword) {
-      setError("Tutti i campi sono obbligatori.");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError("Le password non coincidono.");
-      return;
-    }
-    if (password.length < 6) {
-      setError("La password deve essere di almeno 6 caratteri.");
-      return;
-    }
-
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
     try {
-      const salt = generateSalt();
-      const hash = await hashPassword(password, salt);
-
-      const newConfig: UserConfig = {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      onAuthenticated({
+        email: user.email || '',
         isSetup: true,
-        email,
-        passwordHash: hash,
-        passwordSalt: salt
-      };
-
-      localStorage.setItem(AUTH_KEY, JSON.stringify(newConfig));
-      setConfig(newConfig);
-      onAuthenticated(newConfig);
-    } catch (err) {
-      console.error("Crypto error:", err);
-      setError("Errore durante la generazione della crittografia.");
+        // No password hash needed locally
+      });
+    } catch (err: any) {
+      console.error("Google Auth Error:", err);
+      setError(err.message || "Errore login Google");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!config) return;
+    if (!email || !password) return;
+    setLoading(true);
+    setError('');
 
     try {
-      // Support legacy simple hash (if salt is missing)
-      if (!config.passwordSalt) {
-        // Fallback for old accounts or migration could go here
-        // For now, we just fail or force reset if strictly enforcing new security
-        // But for backward compat with this session's "simpleHash":
-        // simpleHash implementation... (omitted, assuming new users or reset)
-        setError("Account non compatibile con la nuova sicurezza. Resetta la password.");
-        return;
-      }
-
-      const isValid = await verifyPassword(password, config.passwordSalt, config.passwordHash);
-      if (isValid) {
-        onAuthenticated(config);
+      let userCred;
+      if (mode === 'login') {
+        userCred = await signInWithEmailAndPassword(auth, email, password);
       } else {
-        setError("Password non valida.");
+        userCred = await createUserWithEmailAndPassword(auth, email, password);
       }
-    } catch (err) {
-      console.error("Login error:", err);
-      setError("Errore durante la verifica.");
+      onAuthenticated({
+        email: userCred.user.email || '',
+        isSetup: true
+      });
+    } catch (err: any) {
+      console.error("Auth Error:", err);
+      if (err.code === 'auth/invalid-credential') setError("Credenziali non valide.");
+      else if (err.code === 'auth/email-already-in-use') setError("Email già registrata.");
+      else if (err.code === 'auth/weak-password') setError("Password troppo debole (min 6 caratteri).");
+      else setError(err.message || "Errore autenticazione");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleResetRequest = (e: React.FormEvent) => {
+  const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!config) return;
-
-    if (email === config.email) {
-      // Simulazione chiara per l'utente
-      alert(`[SIMULAZIONE SERVER]\n\nUn'email è stata "inviata" a: ${email}\n\nIl tuo codice di verifica è: 123456`);
-
-      const code = prompt("Inserisci il codice ricevuto via mail (guarda l'alert precedente):");
-      if (code === "123456") {
-        // Reset permesso -> torna a setup ma mantenendo email
-        setMode('setup');
-        setPassword('');
-        setConfirmPassword('');
-        setError("Codice verificato. Imposta la nuova password.");
-      } else {
-        setError("Codice errato.");
-      }
-    } else {
-      setError("Email non trovata nel sistema locale.");
+    if (!email) return;
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      alert(`Email di reset inviata a ${email}`);
+      setMode('login');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
-
-  if (mode === 'loading') return null;
 
   return (
     <div className="min-h-screen bg-[#09090b] flex items-center justify-center p-4">
@@ -128,17 +97,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
           </div>
 
           <h2 className="text-2xl font-bold text-center text-white mb-2">
-            {mode === 'setup' && "Configurazione Iniziale"}
-            {mode === 'login' && "Accesso Sicuro"}
+            {mode === 'register' && "Crea Account"}
+            {mode === 'login' && "Accedi al Hub"}
             {mode === 'reset' && "Recupero Password"}
           </h2>
-
-          <div className="bg-blue-900/10 border border-blue-900/30 p-3 rounded-lg mb-6 flex gap-2">
-            <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-            <p className="text-gray-400 text-xs">
-              Questa applicazione funziona localmente nel browser. Nessun dato viene inviato a server esterni. Le email di reset sono simulate.
-            </p>
-          </div>
 
           {error && (
             <div className="mb-4 p-3 bg-red-900/20 border border-red-900/50 rounded-lg flex items-center gap-2 text-red-200 text-sm">
@@ -147,26 +109,42 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             </div>
           )}
 
-          <form onSubmit={mode === 'setup' ? handleSetup : mode === 'login' ? handleLogin : handleResetRequest} className="space-y-4">
-
-            {(mode === 'setup' || mode === 'reset') && (
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">Email Riferimento</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    className="w-full bg-[#09090b] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
-                    placeholder="tu@email.com"
-                    required
-                  />
-                </div>
+          {/* Google Login Button */}
+          {mode !== 'reset' && (
+            <div className="mb-6">
+              <button
+                onClick={handleGoogleLogin}
+                disabled={loading}
+                className="w-full bg-white text-gray-900 hover:bg-gray-100 font-medium rounded-lg py-2.5 transition-all flex items-center justify-center gap-2"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                Accedi con Google
+              </button>
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-800"></div></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-[#18181b] px-2 text-gray-500">Oppure email</span></div>
               </div>
-            )}
+            </div>
+          )}
 
-            {(mode === 'login' || mode === 'setup') && (
+          <form onSubmit={mode === 'reset' ? handleReset : handleEmailAuth} className="space-y-4">
+
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1">Email</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="w-full bg-[#09090b] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:border-emerald-500 outline-none"
+                  placeholder="name@example.com"
+                  required
+                />
+              </div>
+            </div>
+
+            {mode !== 'reset' && (
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1">Password</label>
                 <div className="relative">
@@ -175,24 +153,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                     type="password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="w-full bg-[#09090b] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
-              </div>
-            )}
-
-            {mode === 'setup' && (
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">Conferma Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                    className="w-full bg-[#09090b] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
+                    className="w-full bg-[#09090b] border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:border-emerald-500 outline-none"
                     placeholder="••••••••"
                     required
                   />
@@ -202,69 +163,32 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
 
             <button
               type="submit"
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg py-2.5 transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 mt-2"
+              disabled={loading}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold rounded-lg py-2.5 transition-all flex items-center justify-center gap-2"
             >
-              {mode === 'setup' ? 'Registra e Accedi' : mode === 'login' ? 'Accedi' : 'Invia Link Reset (Simulato)'}
-              <ArrowRight className="w-4 h-4" />
+              {loading ? 'Attendere...' : (mode === 'register' ? 'Registrati' : mode === 'login' ? 'Accedi' : 'Invia Email Reset')}
+              {!loading && <ArrowRight className="w-4 h-4" />}
             </button>
           </form>
 
-          {mode === 'login' && (
-            <div className="mt-6 flex flex-col gap-3 text-center">
-              <button onClick={() => { setMode('reset'); setError(''); }} className="text-xs text-gray-500 hover:text-emerald-400 flex items-center justify-center gap-1 mx-auto transition-colors">
-                <RefreshCw className="w-3 h-3" />
-                Password dimenticata?
-              </button>
-
-              <button
-                onClick={() => setMode('reset-confirm')}
-                className="text-[10px] text-red-900/50 hover:text-red-500 uppercase tracking-widest font-bold transition-colors"
-                type="button"
-              >
-                Reset Forzato Profilo (Dati Salvi)
-              </button>
-            </div>
-          )}
-
-          {mode === 'reset-confirm' && (
-            <div className="mt-4 p-4 bg-red-900/20 border border-red-900/50 rounded-xl text-center">
-              <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-              <h3 className="text-red-400 font-bold mb-2">Sei sicuro?</h3>
-              <p className="text-gray-400 text-xs mb-4">
-                Questo cancellerà il tuo profilo locale (email/password) per permetterti di crearne uno nuovo.
-                <br /><br />
-                <strong className="text-white">I tuoi LINK salvati NON verranno persi.</strong>
-              </p>
-              <div className="flex gap-2 justify-center">
-                <button
-                  onClick={() => setMode('login')}
-                  className="px-4 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs hover:bg-gray-700 transition-colors"
-                >
-                  Annulla
-                </button>
-                <button
-                  onClick={() => {
-                    localStorage.removeItem(AUTH_KEY);
-                    window.location.reload();
-                  }}
-                  className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-500 transition-colors shadow-lg shadow-red-900/20"
-                >
-                  Conferma Reset
-                </button>
-              </div>
-            </div>
-          )}
-          {mode === 'reset' && (
-            <div className="mt-6 text-center">
-              <button onClick={() => { setMode('login'); setError(''); }} className="text-xs text-gray-500 hover:text-white transition-colors">
-                Torna al Login
-              </button>
-            </div>
-          )}
+          <div className="mt-6 text-center text-xs text-gray-500">
+            {mode === 'login' ? (
+              <>
+                Non hai un account? <button onClick={() => setMode('register')} className="text-emerald-400 hover:underline">Registrati</button>
+                <br />
+                <button onClick={() => setMode('reset')} className="mt-2 text-gray-400 hover:text-white">Password dimenticata?</button>
+              </>
+            ) : mode === 'register' ? (
+              <>
+                Hai già un account? <button onClick={() => setMode('login')} className="text-emerald-400 hover:underline">Accedi</button>
+              </>
+            ) : (
+              <button onClick={() => setMode('login')} className="text-emerald-400 hover:underline">Torna al Login</button>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 };
-
 export default AuthScreen;

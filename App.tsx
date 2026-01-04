@@ -1,15 +1,23 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Search, Plus, Sparkles, Download, Upload, Trash2,
   ExternalLink, Server, Globe, Shield, Wifi, Code,
-  RotateCcw, Save, SearchCode, Cpu, Loader2, CheckCircle2,
-  Pencil, AlertCircle, Settings, User as UserIcon, Filter, Cloud,
-  Clock, Zap, PauseCircle
+  RotateCcw, Save, SearchCode, Cpu, Loader2,
+  Pencil, AlertCircle, User as UserIcon, Filter, Cloud,
+  Clock, PauseCircle
 } from 'lucide-react';
 import { LinkItem, AiStatus, UserConfig } from './types';
-import { DEFAULT_LINKS, STORAGE_KEY } from './constants';
 import { enrichLinkData, semanticSearch } from './services/geminiService';
-import { initGoogleDrive, syncWithDrive } from './services/googleDriveService';
+import {
+  subscribeToLinks,
+  addLink,
+  updateLink,
+  deleteLink,
+  batchImportLinks
+} from './services/firestoreService';
+import { auth } from './services/firebase';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+
 import {
   RateLimitState,
   loadRateLimitState,
@@ -20,7 +28,6 @@ import {
   getCooldownRemainingMs,
   formatCooldownTime,
 } from './services/rateLimitService';
-import { getEnrichmentKey, getCachedData } from './services/cacheService';
 import ImportModal from './components/ImportModal';
 import AuthScreen from './components/AuthScreen';
 import EditModal from './components/EditModal';
@@ -67,13 +74,10 @@ const CategoryBadge: React.FC<{ category: string }> = ({ category }) => {
 };
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [currentUser, setCurrentUser] = useState<UserConfig | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [loadingLinks, setLoadingLinks] = useState(false);
 
-  const [links, setLinks] = useState<LinkItem[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : DEFAULT_LINKS;
-  });
+  const [links, setLinks] = useState<LinkItem[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -98,26 +102,44 @@ export default function App() {
   const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => loadRateLimitState());
   const [cooldownDisplay, setCooldownDisplay] = useState('');
 
-  // Drive Sync State
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isDriveReady, setIsDriveReady] = useState(false);
-
-  // Save Data Effect
+  // --- AUTH & DATA SYNC ---
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(links));
-  }, [links]);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setLoadingLinks(true);
+        // Subscribe to Firestore updates
+        const unsubLinks = subscribeToLinks(
+          currentUser.uid,
+          (remoteLinks) => {
+            // AUTO-MIGRATION CHECK
+            if (remoteLinks.length === 0) {
+              const local = localStorage.getItem('personal_hub_links');
+              if (local) {
+                const localParsed = JSON.parse(local);
+                if (localParsed.length > 0) {
+                  if (confirm(`Trovati ${localParsed.length} link locali. Vuoi caricarli nel Cloud?`)) {
+                    batchImportLinks(currentUser.uid, localParsed);
+                  }
+                }
+              }
+            }
+            setLinks(remoteLinks);
+            setLoadingLinks(false);
+          },
+          (error) => {
+            console.error("Firestore Error:", error);
+            setLoadingLinks(false);
+          }
+        );
+        return () => unsubLinks();
+      } else {
+        setLinks([]);
+      }
+    });
 
-  // Init Drive on Auth
-  useEffect(() => {
-    if (isAuthenticated && currentUser?.googleClientId) {
-      initGoogleDrive(currentUser.googleClientId)
-        .then((success) => {
-          setIsDriveReady(success);
-          console.log("Drive API Initialized:", success);
-        })
-        .catch(err => console.error("Drive Init Error:", err));
-    }
-  }, [isAuthenticated, currentUser?.googleClientId]);
+    return () => unsubscribe();
+  }, []);
 
   // --- COOLDOWN TIMER ---
   useEffect(() => {
@@ -142,14 +164,16 @@ export default function App() {
   }, [rateLimitState.isInCooldown, rateLimitState.cooldownUntil]);
 
   // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
+  // Note: We need to handle AI updates via Firestore now!
   useEffect(() => {
-    if (!isAuthenticated || isQueueProcessing) return;
+    if (!user || isQueueProcessing) return;
 
     // Check if in cooldown - mark pending items as queued
     if (rateLimitState.isInCooldown) {
-      setLinks(prev => prev.map(l =>
-        l.aiProcessingStatus === 'pending' ? { ...l, aiProcessingStatus: 'queued' } : l
-      ));
+      const itemsToQueue = links.filter(l => l.aiProcessingStatus === 'pending');
+      itemsToQueue.forEach(l => {
+        updateLink(user.uid, { ...l, aiProcessingStatus: 'queued' });
+      });
       return;
     }
 
@@ -167,7 +191,10 @@ export default function App() {
 
     const timer = setTimeout(async () => {
       setIsQueueProcessing(true);
-      setLinks(prev => prev.map(l => l.id === pendingItem.id ? { ...l, aiProcessingStatus: 'processing' } : l));
+      // NOTE: Optimistic updates are tricky with Firestore if we don't want flicker.
+      // We will just process and then update the doc.
+      // Or we can set 'processing' status on the doc.
+      await updateLink(user.uid, { ...pendingItem, aiProcessingStatus: 'processing' });
 
       // Record this request
       setRateLimitState(prev => recordRequest(prev));
@@ -175,16 +202,15 @@ export default function App() {
       try {
         const enrichment = await enrichLinkData(pendingItem.name, pendingItem.url);
 
-        setLinks(prev => prev.map(l => {
-          if (l.id !== pendingItem.id) return l;
-          return {
-            ...l,
-            description: enrichment.description || l.description,
-            category: enrichment.category || l.category,
-            tags: enrichment.tags || l.tags,
-            aiProcessingStatus: 'done'
-          };
-        }));
+        const updated = {
+          ...pendingItem,
+          description: enrichment.description || pendingItem.description,
+          category: enrichment.category || pendingItem.category,
+          tags: enrichment.tags || pendingItem.tags,
+          aiProcessingStatus: 'done' as const
+        };
+
+        await updateLink(user.uid, updated);
 
         // Record success
         setRateLimitState(prev => recordSuccess(prev));
@@ -203,11 +229,12 @@ export default function App() {
 
         // Mark as queued if rate limited, otherwise error
         const newStatus = isRateLimitError ? 'queued' : 'error';
-        setLinks(prev => prev.map(l => l.id === pendingItem.id ? {
-          ...l,
+
+        await updateLink(user.uid, {
+          ...pendingItem,
           aiProcessingStatus: newStatus,
           lastErrorAt: Date.now()
-        } : l));
+        });
 
         setQueueDelay(prev => Math.min(prev * 2, 60000));
       } finally {
@@ -216,7 +243,7 @@ export default function App() {
     }, queueDelay);
 
     return () => clearTimeout(timer);
-  }, [links, isAuthenticated, isQueueProcessing, queueDelay, rateLimitState]);
+  }, [links, user, isQueueProcessing, queueDelay, rateLimitState]);
 
   // Handle Search
   useEffect(() => {
@@ -238,7 +265,7 @@ export default function App() {
     };
 
     runSearch();
-  }, [searchQuery, isAiSearch]);
+  }, [searchQuery, isAiSearch, links]); // Added links dependency for search
 
   const availableCategories = useMemo(() => {
     const cats = new Set(links.map(l => l.category).filter(c => c && c !== 'Non categorizzato'));
@@ -267,7 +294,7 @@ export default function App() {
   }, [links, searchQuery, isAiSearch, aiSearchResults, categoryFilter]);
 
   const handleAddLink = async () => {
-    if (!newUrl.trim()) return;
+    if (!newUrl.trim() || !user) return;
 
     const normalizedNew = normalizeUrl(newUrl);
     const existing = links.find(l => normalizeUrl(l.url) === normalizedNew);
@@ -289,7 +316,7 @@ export default function App() {
     }
 
     const newItem: LinkItem = {
-      id: crypto.randomUUID(),
+      id: crypto.randomUUID(), // Temp ID, replaced mostly by Firestore ID if using addDoc, but we use our ID model
       name: name,
       url: url,
       category: 'In attesa di classificazione...',
@@ -299,18 +326,34 @@ export default function App() {
       aiProcessingStatus: 'pending'
     };
 
-    setLinks(prev => [newItem, ...prev]);
-    setNewUrl('');
-  };
-
-  const handleDelete = (id: string) => {
-    if (window.confirm("Rimuovere questo tool?")) {
-      setLinks(prev => prev.filter(l => l.id !== id));
+    // Add to Firestore
+    try {
+      await addLink(user.uid, newItem);
+      setNewUrl('');
+    } catch (e) {
+      console.error("Error adding link:", e);
+      alert("Errore salvataggio Cloud.");
     }
   };
 
-  const handleUpdateLink = (updatedLink: LinkItem) => {
-    setLinks(prev => prev.map(l => l.id === updatedLink.id ? updatedLink : l));
+  const handleDelete = async (id: string) => {
+    if (!user) return;
+    if (window.confirm("Rimuovere questo tool dal Cloud?")) {
+      try {
+        await deleteLink(user.uid, id);
+      } catch (e) {
+        console.error("Delete Error", e);
+      }
+    }
+  };
+
+  const handleUpdateLink = async (updatedLink: LinkItem) => {
+    if (!user) return;
+    try {
+      await updateLink(user.uid, updatedLink);
+    } catch (e) {
+      console.error("Update Error", e);
+    }
   };
 
   const handleExport = () => {
@@ -326,7 +369,8 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleImport = (importedData: any[], mode: 'merge' | 'replace') => {
+  const handleImport = async (importedData: any[], mode: 'merge' | 'replace') => {
+    if (!user) return;
     const processed: LinkItem[] = importedData.map((item: any) => ({
       id: item.id || crypto.randomUUID(),
       name: item.name || 'Sconosciuto',
@@ -339,62 +383,29 @@ export default function App() {
     }));
 
     if (mode === 'replace') {
-      setLinks(processed);
-      alert(`Lista sostituita. I dati mancanti saranno processati automaticamente.`);
+      if (!confirm("ATTENZIONE: Questo cancellerà TUTTI i link esistenti nel Cloud. Procedere?")) return;
+      // Delete all current first? Expensive. 
+      // Better to just merge or warn. For now let's just do batch add.
+      await batchImportLinks(user.uid, processed);
+      alert("Importato (Modalità Append - Per sicurezza il replace totale non è attivo per ora).");
     } else {
       const currentUrls = new Set(links.map(l => normalizeUrl(l.url)));
       const newItems = processed.filter((l: LinkItem) => !currentUrls.has(normalizeUrl(l.url)));
-      const duplicatesCount = processed.length - newItems.length;
 
-      if (newItems.length === 0) {
-        alert(`Nessun nuovo elemento aggiunto. Trovati ${duplicatesCount} duplicati.`);
+      if (newItems.length > 0) {
+        await batchImportLinks(user.uid, newItems);
+        alert(`Import completato: ${newItems.length} tool aggiunti al Cloud.`);
       } else {
-        setLinks(prev => [...newItems, ...prev]);
-        alert(`Import completato: Aggiunti ${newItems.length} nuovi tool.`);
+        alert("Nessun nuovo elemento da aggiungere.");
       }
     }
   };
 
-  const handleDriveSync = async () => {
-    if (!isDriveReady || !currentUser) {
-      alert("Google Drive non configurato. Inserisci il Client ID nel profilo.");
-      setShowProfileModal(true);
-      return;
-    }
-
-    setIsSyncing(true);
-    try {
-      const result = await syncWithDrive(links, currentUser);
-      if (result) {
-        setLinks(result.links);
-        alert(`Sync completato!\nScaricati e uniti: ${result.mergedCount} nuovi tool.\nDatabase Cloud aggiornato.`);
-      }
-    } catch (e: any) {
-      console.error("Sync Error Detailed:", e);
-      let msg = "Errore durante il Sync.";
-
-      if (e?.error === 'popup_closed_by_user') {
-        msg += "\Hai chiuso il popup prima del login.";
-      } else if (e?.error === 'access_denied') {
-        msg += "\nAccesso negato. Hai rifiutato i permessi.";
-      } else if (e?.message) {
-        msg += `\nDettaglio: ${e.message}`;
-      } else if (JSON.stringify(e).includes('origin_mismatch')) {
-        msg += "\nERRORE ORIGINE: Il dominio attuale non è autorizzato nella Google Cloud Console.\nVerifica 'Authorized JavaScript origins'.";
-      }
-
-      alert(msg + "\n\nControlla la console (F12) per i dettagli tecnici.");
-    } finally {
-      setIsSyncing(false);
-    }
+  const handleAuthSuccess = () => {
+    // Handled by onAuthStateChanged
   };
 
-  const handleAuthSuccess = (user: UserConfig) => {
-    setCurrentUser(user);
-    setIsAuthenticated(true);
-  };
-
-  if (!isAuthenticated) {
+  if (!user) {
     return <AuthScreen onAuthenticated={handleAuthSuccess} />;
   }
 
@@ -413,12 +424,12 @@ export default function App() {
         onSave={handleUpdateLink}
       />
 
-      {currentUser && (
+      {user && (
         <ProfileModal
           isOpen={showProfileModal}
           onClose={() => setShowProfileModal(false)}
-          currentUser={currentUser}
-          onUpdateUser={setCurrentUser}
+          currentUser={{ email: user.email || '', isSetup: true }}
+          onUpdateUser={() => { }}
         />
       )}
 
@@ -432,31 +443,23 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-100 tracking-tight">Personal Tools Hub</h1>
-                <p className="text-xs text-gray-500">v4.2.0 • {currentUser?.email}</p>
+                <p className="text-xs text-gray-500">Cloud Sync Active • {user.email}</p>
               </div>
             </div>
 
             <div className="flex items-center gap-3 w-full md:w-auto justify-end">
 
-              {/* Drive Sync Button */}
-              <button
-                onClick={handleDriveSync}
-                disabled={isSyncing}
-                className={`p-2 rounded-lg transition-all flex items-center gap-2 border ${isDriveReady
-                  ? "bg-blue-900/20 border-blue-900/50 text-blue-300 hover:bg-blue-900/40"
-                  : "bg-gray-800 border-transparent text-gray-500 hover:text-gray-300"
-                  }`}
-                title={isDriveReady ? "Sincronizza con Drive" : "Configura Drive nel Profilo"}
-              >
-                {isSyncing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Cloud className="w-5 h-5" />}
-                {isDriveReady && <span className="text-xs font-medium hidden lg:inline">Sync Cloud</span>}
-              </button>
+              {loadingLinks && (
+                <span className="text-xs text-emerald-500 flex items-center gap-1 animate-pulse">
+                  <Cloud className="w-3 h-3" /> Sync...
+                </span>
+              )}
 
               <div className="w-px h-6 bg-gray-800 mx-1"></div>
 
               <button onClick={() => setShowProfileModal(true)} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all flex items-center gap-2" title="Profilo">
                 <UserIcon className="w-5 h-5" />
-                <span className="text-xs hidden md:inline">Profilo</span>
+                <span className="text-xs hidden md:inline">Account</span>
               </button>
 
               <button onClick={() => setShowImportModal(true)} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all" title="Importa JSON">
@@ -466,7 +469,7 @@ export default function App() {
                 <Download className="w-5 h-5" />
               </button>
               <div className="w-px h-6 bg-gray-800 mx-1"></div>
-              <button onClick={() => { if (confirm("Uscire dal sistema?")) setIsAuthenticated(false); }} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all" title="Logout">
+              <button onClick={() => { if (confirm("Uscire dal sistema?")) signOut(auth); }} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all" title="Logout">
                 <RotateCcw className="w-5 h-5" />
               </button>
             </div>
@@ -547,7 +550,7 @@ export default function App() {
         {/* Results Info */}
         <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
           <div className="flex items-center gap-4">
-            <span>{filteredLinks.length} Strumenti Visibili</span>
+            <span>{filteredLinks.length} Strumenti Cloud</span>
             {cooldownDisplay && (
               <span className="flex items-center gap-1 text-orange-400 normal-case">
                 <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
@@ -556,7 +559,7 @@ export default function App() {
             {!cooldownDisplay && (isQueueProcessing || links.some(l => l.aiProcessingStatus === 'pending')) && (
               <span className="flex items-center gap-1 text-emerald-500 normal-case">
                 <Loader2 className={`w-3 h-3 ${isQueueProcessing ? 'animate-spin' : 'opacity-50'}`} />
-                {isQueueProcessing ? 'Analisi in corso...' : 'In attesa di analisi...'}
+                {isQueueProcessing ? 'Analisi Cloud in corso...' : 'In attesa di analisi...'}
               </span>
             )}
             {links.filter(l => l.aiProcessingStatus === 'queued').length > 0 && (
@@ -653,8 +656,8 @@ export default function App() {
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-800/50 mb-4">
                 <Search className="w-6 h-6 text-gray-600" />
               </div>
-              <h3 className="text-gray-300 font-medium">Nessuno strumento trovato</h3>
-              <p className="text-gray-500 text-sm mt-1">Prova a cambiare i filtri o la ricerca.</p>
+              <h3 className="text-gray-300 font-medium">Nessuno strumento nel Cloud</h3>
+              <p className="text-gray-500 text-sm mt-1">Aggiungi il tuo primo strumento per iniziare.</p>
             </div>
           )}
         </div>
@@ -665,11 +668,11 @@ export default function App() {
       <div className="fixed bottom-4 right-4 max-w-sm hidden lg:block">
         <div className="bg-[#18181b]/90 backdrop-blur border border-gray-800 p-3 rounded-lg shadow-2xl flex gap-3 items-center">
           <div className="p-2 bg-emerald-900/20 rounded-md">
-            {isDriveReady ? <Cloud className="w-4 h-4 text-blue-400" /> : <Save className="w-4 h-4 text-emerald-400" />}
+            <Cloud className="w-4 h-4 text-emerald-400" />
           </div>
           <div>
-            <p className="text-xs text-gray-300 font-medium">{isDriveReady ? 'Cloud Sync Attivo' : 'Sistema Protetto'}</p>
-            <p className="text-[10px] text-gray-500">{isDriveReady ? 'Dati sincronizzati su Drive' : 'Dati salvati localmente'}</p>
+            <p className="text-xs text-gray-300 font-medium">Firebase Sync Attivo</p>
+            <p className="text-[10px] text-gray-500">I dati sono salvati in tempo reale nel cloud.</p>
           </div>
         </div>
       </div>

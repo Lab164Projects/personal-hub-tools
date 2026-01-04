@@ -1,3 +1,4 @@
+
 export interface LinkItem {
   id: string;
   name: string;
@@ -28,13 +29,4 @@ export enum AiStatus {
 export interface UserConfig {
   isSetup: boolean;
   email: string;
-  passwordHash: string; // SHA-256 hash
-  passwordSalt?: string; // Salt for secure hashing
-  googleClientId?: string; // ID Client per Google Drive API
-}
-
-export interface DriveFileContent {
-  lastUpdated: number;
-  links: LinkItem[];
-  userConfig: Partial<UserConfig>; // Backup configurazione (esclusa auth sensibile)
 }
