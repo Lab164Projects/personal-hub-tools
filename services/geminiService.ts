@@ -2,8 +2,9 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
 
-// Accesso alla chiave configurata in .env.local
+// Accesso alla chiave e modello configurati in .env.local
 const API_KEY = import.meta.env.GEMINI_API_KEY || "";
+const MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
@@ -47,7 +48,7 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: MODEL_NAME,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -113,7 +114,7 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: MODEL_NAME,
       contents: prompt,
       config: {
         responseMimeType: "application/json"
@@ -174,7 +175,7 @@ export const semanticSearch = async (query: string, items: LinkItem[]): Promise<
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: MODEL_NAME,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -228,7 +229,12 @@ export const repairAndParseJson = async (rawInput: string): Promise<any[]> => {
     const parsed = JSON.parse(text);
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    console.error("Errore Riparazione IA:", error);
-    throw new Error("Impossibile riparare i dati JSON.");
+    console.error("Errore Dettagliato Gemini:", {
+      message: error.message,
+      status: error.status,
+      details: error.details,
+      stack: error.stack
+    });
+    throw error;
   }
 };
