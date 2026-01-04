@@ -302,6 +302,45 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [links, user, isQueueProcessing, queueDelay, rateLimitState]);
 
+  const handleManualAiAnalysis = async (link: LinkItem) => {
+    if (!user || isQueueProcessing || rateLimitState.isInCooldown) return;
+
+    // Mark as processing immediately
+    await updateLink(user.uid, { ...link, aiProcessingStatus: 'processing' });
+    setIsQueueProcessing(true);
+    setRateLimitState(prev => recordRequest(prev));
+
+    try {
+      const results = await enrichLinksBatch([{
+        id: link.id,
+        name: link.name,
+        url: link.url,
+        currentDescription: link.description
+      }]);
+
+      const result = results[link.id];
+      if (result) {
+        await updateLink(user.uid, {
+          ...link,
+          description: result.description || link.description,
+          category: (result.category && result.category !== "Non categorizzato") ? result.category : link.category,
+          tags: (result.tags && result.tags.length > 0) ? result.tags : link.tags,
+          aiProcessingStatus: 'done'
+        });
+        setRateLimitState(prev => recordSuccess(prev));
+      } else {
+        throw new Error("Nessun risultato");
+      }
+    } catch (e: any) {
+      console.error("Manual AI Error:", e);
+      const isRateLimit = e?.message?.includes('429');
+      setRateLimitState(prev => recordError(prev, isRateLimit));
+      await updateLink(user.uid, { ...link, aiProcessingStatus: 'error' });
+    } finally {
+      setIsQueueProcessing(false);
+    }
+  };
+
   // Handle Search
   useEffect(() => {
     const runSearch = async () => {
@@ -732,15 +771,32 @@ export default function App() {
                 ))}
               </div>
 
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-auto w-full flex items-center justify-center gap-2 py-2 bg-gray-900/50 hover:bg-gray-800 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-400 transition-all"
-              >
-                <ExternalLink className="w-3 h-3" />
-                Apri Strumento
-              </a>
+              <div className="mt-auto flex gap-2">
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex-1 flex items-center justify-center gap-2 py-2 bg-gray-900/50 hover:bg-gray-800 border border-gray-800 rounded-lg text-xs font-medium text-gray-400 hover:text-emerald-400 transition-all"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Apri
+                </a>
+
+                {(link.aiProcessingStatus === 'pending' || link.aiProcessingStatus === 'error') && (
+                  <button
+                    onClick={() => handleManualAiAnalysis(link)}
+                    disabled={isQueueProcessing || rateLimitState.isInCooldown}
+                    className="px-3 py-2 bg-emerald-900/20 hover:bg-emerald-900/40 border border-emerald-800/50 rounded-lg text-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Analizza con IA"
+                  >
+                    {isQueueProcessing && link.aiProcessingStatus === 'processing' ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
 

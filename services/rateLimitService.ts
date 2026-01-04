@@ -4,9 +4,9 @@
  */
 
 const STORAGE_KEY = 'gemini_rate_limit_state';
-const MAX_REQUESTS_PER_MINUTE = 10;
-const COOLDOWN_DURATION_MS = 10 * 60 * 1000; // 10 minutes
-const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_REQUESTS_PER_MINUTE = 15;
+const COOLDOWN_DURATION_MS = 5 * 60 * 1000; // 5 minutes (reduced from 10)
+const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 export interface RateLimitState {
     requestsThisMinute: number;
@@ -96,7 +96,8 @@ export const recordError = (state: RateLimitState, isRateLimitError: boolean): R
     newState.consecutiveErrors++;
 
     // Enter cooldown if rate limit error or too many consecutive errors
-    if (isRateLimitError || newState.consecutiveErrors >= 3) {
+    // Enter cooldown ONLY if explicit rate limit error (429) or high consecutive errors
+    if (isRateLimitError || newState.consecutiveErrors >= 5) {
         newState.isInCooldown = true;
         newState.cooldownUntil = Date.now() + COOLDOWN_DURATION_MS;
         console.log(`Rate limit cooldown activated until ${new Date(newState.cooldownUntil).toLocaleTimeString()}`);
