@@ -123,10 +123,20 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
 
     const text = response.text;
     console.log("Raw Batch AI Response:", text);
-    if (!text) throw new Error("Risposta Batch Vuota");
+    if (!text) {
+      console.warn("AI returned empty text. This might be a quota block or safety filter.");
+      throw new Error("Risposta Batch Vuota");
+    }
 
     // Parse and handle potential casing issues with IDs from AI
-    const rawResult = JSON.parse(text);
+    let rawResult;
+    try {
+      rawResult = JSON.parse(text);
+    } catch (pe) {
+      console.error("JSON Parse Error on AI response:", text);
+      throw new Error("Errore nel formato dei dati IA");
+    }
+
     const normalizedResult: Record<string, Partial<LinkItem>> = {};
 
     // Ensure we match the original IDs correctly even if AI changed them
@@ -139,8 +149,14 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
 
     return normalizedResult;
 
-  } catch (error) {
-    console.error("Errore Batch Gemini:", error);
+  } catch (error: any) {
+    const isQuota = error.message?.includes('429') || error.status === 429;
+    console.error("Errore Dettagliato Gemini:", {
+      message: error.message,
+      isQuota: isQuota,
+      status: error.status,
+      details: error.details
+    });
     throw error;
   }
 };
