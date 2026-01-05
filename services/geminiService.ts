@@ -3,11 +3,19 @@ import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
 
 // Accesso alla chiave e modello configurati (pressione GEMINI_ in vite.config.ts)
-const API_KEY = import.meta.env.GEMINI_API_KEY || "";
+const RAW_API_KEY = import.meta.env.GEMINI_API_KEY || "";
 const MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
 
+// Sanificazione: Rimuove eventuali apici o spazi bianchi che possono finire nelle variabili Vercel/Env
+const API_KEY = RAW_API_KEY.replace(/['"]+/g, '').trim();
+
 console.log("AI Service Init - Model:", MODEL_NAME);
-console.log("AI Service Init - Key Present:", !!API_KEY);
+console.log("AI Service Init - Key Status:", {
+  present: !!API_KEY,
+  length: API_KEY.length,
+  prefix: API_KEY.substring(0, 4) + "...",
+  suffix: "..." + API_KEY.substring(API_KEY.length - 4)
+});
 
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
