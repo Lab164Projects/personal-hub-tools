@@ -528,7 +528,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen pb-20">
+    <div className="min-h-screen w-full max-w-none bg-[#09090b] pb-20">
       <ImportModal
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
