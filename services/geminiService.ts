@@ -9,13 +9,8 @@ const MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
 // Sanificazione: Rimuove eventuali apici o spazi bianchi che possono finire nelle variabili Vercel/Env
 const API_KEY = RAW_API_KEY.replace(/['"]+/g, '').trim();
 
-console.log("AI Service Init - Model:", MODEL_NAME);
-console.log("AI Service Init - Key Status:", {
-  present: !!API_KEY,
-  length: API_KEY.length,
-  prefix: API_KEY.substring(0, 4) + "...",
-  suffix: "..." + API_KEY.substring(API_KEY.length - 4)
-});
+console.log(`AI Service Init - Model: ${MODEL_NAME}`);
+console.log(`AI Service Init - Key Info: Len=${API_KEY.length}, Prefix=${API_KEY.substring(0, 5)}..., Suffix=...${API_KEY.substring(API_KEY.length - 4)}`);
 
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
