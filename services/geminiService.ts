@@ -4,12 +4,15 @@ import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./
 
 // Accesso alla chiave e modello configurati (pressione GEMINI_ in vite.config.ts)
 const RAW_API_KEY = import.meta.env.GEMINI_API_KEY || "";
-const MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
+const RAW_MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 // Sanificazione: Rimuove eventuali apici o spazi bianchi che possono finire nelle variabili Vercel/Env
 const API_KEY = RAW_API_KEY.replace(/['"]+/g, '').trim();
 
-console.log(`AI Service Init - Model: ${MODEL_NAME}`);
+// Supporto per rotazione modelli se specificati come lista separata da virgola
+const MODEL_LIST = RAW_MODEL_NAME.split(',').map(m => m.replace(/['"]+/g, '').trim());
+
+console.log(`AI Service Init - Models: ${MODEL_LIST.join(', ')}`);
 console.log(`AI Service Init - Key Info: Len=${API_KEY.length}, Prefix=${API_KEY.substring(0, 5)}..., Suffix=...${API_KEY.substring(API_KEY.length - 4)}`);
 
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
@@ -26,6 +29,34 @@ const isValidUrl = (url: string): boolean => {
 const isLocalUrl = (url: string): boolean => {
   return url.includes('localhost') || url.includes('127.0.0.1') || url.includes('::1');
 };
+
+/**
+ * HELPER per rotazione modelli in caso di quota esaurita (429)
+ */
+async function callWithModelRotation(contents: string, config: any): Promise<any> {
+  const ai = getAiClient();
+  let lastError = null;
+
+  for (const model of MODEL_LIST) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents,
+        config
+      });
+      if (response.text) return response;
+    } catch (error: any) {
+      const isRateLimit = error.message?.includes('429') || error.status === 429;
+      if (isRateLimit) {
+        console.warn(`Modello ${model} esaurito (Quota). Provo il prossimo...`);
+        lastError = error;
+        continue;
+      }
+      throw error; // Altri tipi di errore bloccano l'esecuzione
+    }
+  }
+  throw lastError || new Error("Nessun modello disponibile");
+}
 
 export const enrichLinkData = async (name: string, url: string): Promise<Partial<LinkItem>> => {
   // 1. Validation to prevent wasted calls
@@ -53,20 +84,16 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
   Rispondi esclusivamente in formato JSON.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            category: { type: Type.STRING },
-            description: { type: Type.STRING },
-            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-          },
-          required: ["category", "description", "tags"],
+    const response = await callWithModelRotation(prompt, {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          category: { type: Type.STRING },
+          description: { type: Type.STRING },
+          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
         },
+        required: ["category", "description", "tags"],
       },
     });
 
@@ -119,12 +146,8 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
   }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json"
-      }
+    const response = await callWithModelRotation(prompt, {
+      responseMimeType: "application/json"
     });
 
     const text = response.text;
@@ -196,16 +219,12 @@ export const semanticSearch = async (query: string, items: LinkItem[]): Promise<
   Lista: ${JSON.stringify(context)}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            matchedIds: { type: Type.ARRAY, items: { type: Type.STRING } }
-          }
+    const response = await callWithModelRotation(prompt, {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          matchedIds: { type: Type.ARRAY, items: { type: Type.STRING } }
         }
       }
     });
