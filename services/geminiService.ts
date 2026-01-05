@@ -16,6 +16,36 @@ console.log(`AI Service Init - Models: ${MODEL_LIST.join(', ')}`);
 console.log(`AI Service Init - Key Info: Len=${API_KEY.length}, Prefix=${API_KEY.substring(0, 5)}..., Suffix=...${API_KEY.substring(API_KEY.length - 4)}`);
 
 /**
+ * Token limits per model (TPM - Tokens Per Minute)
+ * Estimated tokens per item: ~400 (input + output combined)
+ * We use 70% of the limit for safety margin
+ */
+const MODEL_TOKEN_LIMITS: Record<string, number> = {
+  'gemini-3-flash': 250000,
+  'gemini-2.5-flash-lite': 250000,
+  'gemini-2.5-flash': 250000,
+  'gemini-2.5-flash-tts': 10000,
+  'gemini-1.5-flash': 250000,
+  'default': 100000
+};
+
+const TOKENS_PER_ITEM = 400; // Conservative estimate
+const SAFETY_MARGIN = 0.7;   // Use only 70% of limit
+const MAX_PRACTICAL_BATCH = 50; // Cap for practical processing
+
+/**
+ * Calculate max batch size based on the first model in the rotation list
+ */
+export function getMaxBatchSize(): number {
+  const primaryModel = MODEL_LIST[0] || 'default';
+  const tokenLimit = MODEL_TOKEN_LIMITS[primaryModel] || MODEL_TOKEN_LIMITS['default'];
+  const theoreticalMax = Math.floor((tokenLimit * SAFETY_MARGIN) / TOKENS_PER_ITEM);
+  const finalBatchSize = Math.min(theoreticalMax, MAX_PRACTICAL_BATCH);
+  console.log(`Batch Size Calculated: ${finalBatchSize} items (Model: ${primaryModel}, Limit: ${tokenLimit} TPM)`);
+  return finalBatchSize;
+}
+
+/**
  * HELPER per rimuovere config avanzate che causano 400 su modelli vecchi/lite
  */
 function sanitizeConfigForModel(model: string, config: any) {

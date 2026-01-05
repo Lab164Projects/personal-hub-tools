@@ -7,7 +7,7 @@ import {
   Clock, PauseCircle, LogIn
 } from 'lucide-react';
 import { LinkItem, AiStatus, UserConfig } from './types';
-import { enrichLinkData, semanticSearch, enrichLinksBatch } from './services/geminiService';
+import { enrichLinkData, semanticSearch, enrichLinksBatch, getMaxBatchSize } from './services/geminiService';
 import {
   subscribeToLinks,
   addLink,
@@ -211,7 +211,8 @@ export default function App() {
       // Re-check inside timeout
       if (rateLimitState.isInCooldown) return;
 
-      // GET BATCH (Max 3 items)
+      // GET BATCH - Use dynamic size based on model token limits
+      const maxBatch = getMaxBatchSize();
       // We pick pending/queued or error items that haven't been tried recently
       const batchItems = links
         .filter(l => {
@@ -224,7 +225,7 @@ export default function App() {
           }
           return false;
         })
-        .slice(0, 3);
+        .slice(0, maxBatch);
 
       if (batchItems.length === 0) return;
 
