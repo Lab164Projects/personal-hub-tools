@@ -120,7 +120,7 @@ export default function App() {
   const [editingLink, setEditingLink] = useState<LinkItem | null>(null);
 
   // AI Queue
-  const [queueDelay, setQueueDelay] = useState(6000);
+  const [queueDelay, setQueueDelay] = useState(20000); // 20s = 3 requests per minute
   const [isQueueProcessing, setIsQueueProcessing] = useState(false);
   const [isAutoAiEnabled, setIsAutoAiEnabled] = useState(() => {
     return localStorage.getItem('auto_ai_enabled') !== 'false'; // Default true
