@@ -122,6 +122,9 @@ export default function App() {
   // AI Queue
   const [queueDelay, setQueueDelay] = useState(6000);
   const [isQueueProcessing, setIsQueueProcessing] = useState(false);
+  const [isAutoAiEnabled, setIsAutoAiEnabled] = useState(() => {
+    return localStorage.getItem('auto_ai_enabled') !== 'false'; // Default true
+  });
 
   // Rate Limiting State
   const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => loadRateLimitState());
@@ -190,7 +193,7 @@ export default function App() {
 
   // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
   useEffect(() => {
-    if (!user || isQueueProcessing) return;
+    if (!user || isQueueProcessing || !isAutoAiEnabled) return;
 
     // STOP IMMEDIATELY if in cooldown. Do not write to Firestore.
     // The UI handles the visual indication of "Queued" or "Cooldown".
@@ -209,8 +212,18 @@ export default function App() {
       if (rateLimitState.isInCooldown) return;
 
       // GET BATCH (Max 3 items)
+      // We pick pending/queued or error items that haven't been tried recently
       const batchItems = links
-        .filter(l => l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued')
+        .filter(l => {
+          if (l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued') return true;
+          if (l.aiProcessingStatus === 'error') {
+            // Only retry errors if they have no description and enough time passed (5 mins)
+            const fiveMins = 5 * 60 * 1000;
+            const timeSinceError = Date.now() - (l.lastErrorAt || 0);
+            return !l.description || l.description.includes('analisi') || timeSinceError > fiveMins;
+          }
+          return false;
+        })
         .slice(0, 3);
 
       if (batchItems.length === 0) return;
@@ -584,6 +597,19 @@ export default function App() {
                   <Cloud className="w-3 h-3" /> Sync...
                 </span>
               )}
+
+              <button
+                onClick={() => {
+                  const newVal = !isAutoAiEnabled;
+                  setIsAutoAiEnabled(newVal);
+                  localStorage.setItem('auto_ai_enabled', String(newVal));
+                }}
+                className={`p-2 rounded-lg transition-all flex items-center gap-2 ${isAutoAiEnabled ? 'text-emerald-400 bg-emerald-500/10' : 'text-gray-500 bg-gray-800'}`}
+                title={isAutoAiEnabled ? "AI Automatica: ON" : "AI Automatica: OFF"}
+              >
+                {isAutoAiEnabled ? <Sparkles className="w-5 h-5 animate-pulse" /> : <PauseCircle className="w-5 h-5" />}
+                <span className="text-xs hidden md:inline">{isAutoAiEnabled ? 'AI On' : 'AI Off'}</span>
+              </button>
 
               <div className="w-px h-6 bg-gray-800 mx-1"></div>
 
