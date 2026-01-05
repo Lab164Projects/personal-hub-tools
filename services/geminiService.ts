@@ -15,6 +15,19 @@ const MODEL_LIST = RAW_MODEL_NAME.split(',').map(m => m.replace(/['"]+/g, '').tr
 console.log(`AI Service Init - Models: ${MODEL_LIST.join(', ')}`);
 console.log(`AI Service Init - Key Info: Len=${API_KEY.length}, Prefix=${API_KEY.substring(0, 5)}..., Suffix=...${API_KEY.substring(API_KEY.length - 4)}`);
 
+/**
+ * HELPER per rimuovere config avanzate che causano 400 su modelli vecchi/lite
+ */
+function sanitizeConfigForModel(model: string, config: any) {
+  const sanitized = { ...config };
+  // Alcuni modelli lite/flash-lite non supportano responseMimeType o responseSchema
+  if (model.includes('lite') || model.includes('pro')) {
+    // Mantieni la config base se necessario, ma rimuovi schema se sospetto
+    // Per ora proviamo a rimuovere solo se fallisce
+  }
+  return sanitized;
+}
+
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
 const isValidUrl = (url: string): boolean => {
@@ -39,20 +52,43 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
 
   for (const model of MODEL_LIST) {
     try {
+      console.log(`Tentativo con modello: ${model}...`);
       const response = await ai.models.generateContent({
         model,
-        contents,
-        config
+        contents: contents,
+        config: sanitizeConfigForModel(model, config)
       });
-      if (response.text) return response;
+      if (response.text) {
+        console.log(`Modello ${model} ha risposto con successo.`);
+        return response;
+      }
     } catch (error: any) {
       const isRateLimit = error.message?.includes('429') || error.status === 429;
+      const isBadRequest = error.message?.includes('400') || error.status === 400;
+
       if (isRateLimit) {
         console.warn(`Modello ${model} esaurito (Quota). Provo il prossimo...`);
         lastError = error;
         continue;
       }
-      throw error; // Altri tipi di errore bloccano l'esecuzione
+
+      if (isBadRequest && model.includes('lite')) {
+        console.warn(`Modello ${model} ha rifiutato la config (400). Riprovo con config semplificata...`);
+        try {
+          const simpleResponse = await ai.models.generateContent({
+            model,
+            contents: contents,
+            config: {} // Riprova senza JSON schema o altro
+          });
+          if (simpleResponse.text) return simpleResponse;
+        } catch (e2) {
+          console.error(`Fallimento anche con config semplificata su ${model}`);
+        }
+      }
+
+      console.error(`Errore critico su modello ${model}:`, error.message);
+      lastError = error;
+      continue; // Passa comunque al prossimo modello invece di bloccarsi
     }
   }
   throw lastError || new Error("Nessun modello disponibile");
