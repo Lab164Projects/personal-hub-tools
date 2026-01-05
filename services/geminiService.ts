@@ -2,9 +2,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
 
-// Accesso alla chiave e modello configurati in .env.local
-const API_KEY = import.meta.env.GEMINI_API_KEY || "";
-const MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
+// Accesso alla chiave e modello configurati in .env.local o tramite define di Vite
+const API_KEY = import.meta.env.GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : "") || "";
+const MODEL_NAME = import.meta.env.GEMINI_MODEL || (typeof process !== 'undefined' ? process.env.GEMINI_MODEL : "gemini-1.5-flash") || "gemini-1.5-flash";
+
+console.log("AI Service Init - Model:", MODEL_NAME);
 
 const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
