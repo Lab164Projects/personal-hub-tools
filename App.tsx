@@ -200,6 +200,18 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // --- AUTO LOGOUT UNAUTHORIZED USER ---
+  useEffect(() => {
+    if (isAuthorized === false && user) {
+      console.log("Unauthorized user detected. Scheduling logout in 5s...");
+      const timer = setTimeout(() => {
+        console.log("Executing auto sign-out now.");
+        signOut(auth);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthorized, user]);
+
   // --- COOLDOWN TIMER ---
   useEffect(() => {
     if (!rateLimitState.isInCooldown) {
@@ -596,18 +608,7 @@ export default function App() {
     );
   }
 
-  // Access Denied - Auto sign out after 5 seconds
-  // Auto sign-out effect
-  useEffect(() => {
-    if (isAuthorized === false && user) {
-      console.log("Unauthorized user detected. Scheduling logout in 5s...");
-      const timer = setTimeout(() => {
-        console.log("Executing auto sign-out now.");
-        signOut(auth);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [isAuthorized, user]);
+
 
   // Access Denied UI
   if (isAuthorized === false) {
