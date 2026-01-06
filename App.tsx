@@ -586,8 +586,13 @@ export default function App() {
     );
   }
 
-  // Access Denied
+  // Access Denied - Auto sign out after 5 seconds
   if (!isAuthorized) {
+    // Auto sign-out after delay
+    setTimeout(() => {
+      signOut(auth);
+    }, 5000);
+
     return (
       <div className="min-h-screen bg-[#09090b] flex items-center justify-center p-4">
         <div className="bg-gray-900 border border-red-900/50 rounded-xl p-8 max-w-md text-center">
@@ -599,13 +604,14 @@ export default function App() {
             L'account <span className="text-white font-medium">{user.email}</span> non è autorizzato ad accedere a questa applicazione.
           </p>
           <p className="text-sm text-gray-500 mb-6">
-            Contatta l'amministratore per richiedere l'accesso.
+            Contatta l'amministratore per richiedere l'accesso.<br />
+            <span className="text-yellow-500">Verrai disconnesso automaticamente tra 5 secondi...</span>
           </p>
           <button
             onClick={() => signOut(auth)}
             className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
           >
-            Esci
+            Esci Ora
           </button>
         </div>
       </div>
