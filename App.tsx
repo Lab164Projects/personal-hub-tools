@@ -142,12 +142,19 @@ export default function App() {
         // Check authorization
         setIsAuthorized(null); // Reset to loading
         console.log("Checking authorization for:", currentUser.email);
-        const authorized = await isUserAuthorized(currentUser.email);
-        console.log("Authorization Result:", authorized);
-        setIsAuthorized(authorized);
 
-        if (!authorized) {
-          console.warn(`User ${currentUser.email} is NOT authorized. Access denied.`);
+        try {
+          const authorized = await isUserAuthorized(currentUser.email);
+          console.log("Authorization Result:", authorized);
+          setIsAuthorized(authorized);
+
+          if (!authorized) {
+            console.warn(`User ${currentUser.email} is NOT authorized. Access denied.`);
+            return;
+          }
+        } catch (authErr) {
+          console.error("Authorization check failed:", authErr);
+          setIsAuthorized(false); // Default to Deny
           return;
         }
 
