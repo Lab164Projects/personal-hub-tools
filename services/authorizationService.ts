@@ -58,7 +58,14 @@ export async function isUserAuthorized(email: string | null): Promise<boolean> {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    const isAllowed = config.emails.map(e => e.toLowerCase().trim()).includes(normalizedEmail);
+
+    // SMART CLEANER: Normalize DB entries to handle user formatting errors 
+    // (e.g. users typing "['email']" instead of just "email")
+    const allowedSet = config.emails.map(e =>
+        String(e).replace(/[\[\]"'\s]/g, '').toLowerCase()
+    );
+
+    const isAllowed = allowedSet.includes(normalizedEmail);
 
     lastDebugStatus = isAllowed
         ? `Authorized (${normalizedEmail})`
