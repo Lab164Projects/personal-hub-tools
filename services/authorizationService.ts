@@ -45,8 +45,9 @@ export async function isUserAuthorized(email: string | null): Promise<boolean> {
 
     const config = await getAuthConfig();
     if (!config || !config.emails) {
-        console.warn("No auth config found - allowing all users (fallback mode)");
-        return true; // Fallback: allow all if config is missing
+        console.error("Auth Config NOT FOUND or invalid. STRICT MODE: Access Denied.");
+        // STRICT MODE: If we can't verify the whitelist, we DENY everyone.
+        return false;
     }
 
     const normalizedEmail = email.toLowerCase().trim();
