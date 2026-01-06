@@ -140,7 +140,10 @@ export default function App() {
 
       if (currentUser) {
         // Check authorization
+        setIsAuthorized(null); // Reset to loading
+        console.log("Checking authorization for:", currentUser.email);
         const authorized = await isUserAuthorized(currentUser.email);
+        console.log("Authorization Result:", authorized);
         setIsAuthorized(authorized);
 
         if (!authorized) {
@@ -587,12 +590,20 @@ export default function App() {
   }
 
   // Access Denied - Auto sign out after 5 seconds
-  if (!isAuthorized) {
-    // Auto sign-out after delay
-    setTimeout(() => {
-      signOut(auth);
-    }, 5000);
+  // Auto sign-out effect
+  useEffect(() => {
+    if (isAuthorized === false && user) {
+      console.log("Unauthorized user detected. Scheduling logout in 5s...");
+      const timer = setTimeout(() => {
+        console.log("Executing auto sign-out now.");
+        signOut(auth);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthorized, user]);
 
+  // Access Denied UI
+  if (isAuthorized === false) {
     return (
       <div className="min-h-screen bg-[#09090b] flex items-center justify-center p-4">
         <div className="bg-gray-900 border border-red-900/50 rounded-xl p-8 max-w-md text-center">
