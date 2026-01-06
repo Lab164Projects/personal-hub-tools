@@ -62,7 +62,7 @@ export async function isUserAuthorized(email: string | null): Promise<boolean> {
 
     lastDebugStatus = isAllowed
         ? `Authorized (${normalizedEmail})`
-        : `Denied: Email ${normalizedEmail} not in whitelist [${config.emails.length} emails loaded]`;
+        : `Denied: '${normalizedEmail}' not found. \nDB Whitelist: [${config.emails.join(", ")}]`;
 
     console.log(`Authorization check for ${normalizedEmail}: ${isAllowed ? 'ALLOWED' : 'DENIED'}`);
     return isAllowed;
