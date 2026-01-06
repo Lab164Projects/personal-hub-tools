@@ -29,7 +29,7 @@ import {
   getCooldownRemainingMs,
   formatCooldownTime,
 } from './services/rateLimitService';
-import { isUserAuthorized, getSharedDatabaseOwner } from './services/authorizationService';
+import { isUserAuthorized, getSharedDatabaseOwner, getAuthDebugInfo } from './services/authorizationService';
 import ImportModal from './components/ImportModal';
 import AuthScreen from './components/AuthScreen';
 import EditModal from './components/EditModal';
@@ -626,6 +626,11 @@ export default function App() {
             Contatta l'amministratore per richiedere l'accesso.<br />
             <span className="text-yellow-500">Verrai disconnesso automaticamente tra 5 secondi...</span>
           </p>
+
+          <div className="bg-black/50 p-2 rounded text-xs text-left mb-4 font-mono text-gray-400 overflow-auto max-h-20">
+            Debug: {getAuthDebugInfo()}
+          </div>
+
           <button
             onClick={() => signOut(auth)}
             className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"

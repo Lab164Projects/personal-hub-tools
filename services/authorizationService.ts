@@ -14,6 +14,11 @@ interface AuthConfig {
 
 // Cache to avoid repeated Firestore reads
 let cachedConfig: AuthConfig | null = null;
+let lastDebugStatus = "Not checked yet";
+
+export function getAuthDebugInfo() {
+    return lastDebugStatus;
+}
 
 /**
  * Fetches the authorization config from Firestore
@@ -31,8 +36,9 @@ async function getAuthConfig(): Promise<AuthConfig | null> {
             });
             return cachedConfig;
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error loading auth config:", error);
+        lastDebugStatus = `Error loading config: ${error.message || error}`;
     }
     return null;
 }
@@ -46,12 +52,18 @@ export async function isUserAuthorized(email: string | null): Promise<boolean> {
     const config = await getAuthConfig();
     if (!config || !config.emails) {
         console.error("Auth Config NOT FOUND or invalid. STRICT MODE: Access Denied.");
+        lastDebugStatus = "Config document not found or empty (Strict Mode)";
         // STRICT MODE: If we can't verify the whitelist, we DENY everyone.
         return false;
     }
 
     const normalizedEmail = email.toLowerCase().trim();
     const isAllowed = config.emails.map(e => e.toLowerCase().trim()).includes(normalizedEmail);
+
+    lastDebugStatus = isAllowed
+        ? `Authorized (${normalizedEmail})`
+        : `Denied: Email ${normalizedEmail} not in whitelist [${config.emails.length} emails loaded]`;
+
     console.log(`Authorization check for ${normalizedEmail}: ${isAllowed ? 'ALLOWED' : 'DENIED'}`);
     return isAllowed;
 }
