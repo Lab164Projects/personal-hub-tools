@@ -29,6 +29,7 @@ import {
   getCooldownRemainingMs,
   formatCooldownTime,
 } from './services/rateLimitService';
+import { isUserAuthorized, getSharedDatabaseOwner } from './services/authorizationService';
 import ImportModal from './components/ImportModal';
 import AuthScreen from './components/AuthScreen';
 import EditModal from './components/EditModal';
@@ -100,6 +101,8 @@ const CategoryBadge: React.FC<{ category: string }> = ({ category }) => {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null); // null = checking
+  const [effectiveUid, setEffectiveUid] = useState<string | null>(null); // Shared DB owner UID
   const [loadingLinks, setLoadingLinks] = useState(false);
 
   const [links, setLinks] = useState<LinkItem[]>([]);
@@ -134,20 +137,36 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+
       if (currentUser) {
+        // Check authorization
+        const authorized = await isUserAuthorized(currentUser.email);
+        setIsAuthorized(authorized);
+
+        if (!authorized) {
+          console.warn(`User ${currentUser.email} is NOT authorized. Access denied.`);
+          return;
+        }
+
+        // Get shared database owner UID
+        const sharedOwner = await getSharedDatabaseOwner();
+        const uidToUse = sharedOwner || currentUser.uid;
+        setEffectiveUid(uidToUse);
+        console.log(`Using database UID: ${uidToUse} (shared: ${sharedOwner ? 'yes' : 'no'})`);
+
         setLoadingLinks(true);
-        // Subscribe to Firestore updates
+        // Subscribe to Firestore updates using effective UID
         const unsubLinks = subscribeToLinks(
-          currentUser.uid,
+          uidToUse,
           (remoteLinks) => {
-            // AUTO-MIGRATION CHECK
-            if (remoteLinks.length === 0) {
+            // AUTO-MIGRATION CHECK (only for owner)
+            if (remoteLinks.length === 0 && uidToUse === currentUser.uid) {
               const local = localStorage.getItem('personal_hub_links');
               if (local) {
                 const localParsed = JSON.parse(local);
                 if (localParsed.length > 0) {
                   if (confirm(`Trovati ${localParsed.length} link locali. Vuoi caricarli nel Cloud?`)) {
-                    batchImportLinks(currentUser.uid, localParsed);
+                    batchImportLinks(uidToUse, localParsed);
                   }
                 }
               }
@@ -163,6 +182,8 @@ export default function App() {
         return () => unsubLinks();
       } else {
         setLinks([]);
+        setIsAuthorized(null);
+        setEffectiveUid(null);
       }
     });
 
@@ -233,7 +254,7 @@ export default function App() {
 
       // Mark batch as processing
       for (const item of batchItems) {
-        await updateLink(user.uid, { ...item, aiProcessingStatus: 'processing' });
+        await updateLink(effectiveUid!, { ...item, aiProcessingStatus: 'processing' });
       }
 
       setRateLimitState(prev => recordRequest(prev));
@@ -283,7 +304,7 @@ export default function App() {
             tags: newTags,
             aiProcessingStatus: newStatus
           };
-          await updateLink(user.uid, updated);
+          await updateLink(effectiveUid!, updated);
         }
 
         setRateLimitState(prev => recordSuccess(prev));
@@ -299,7 +320,7 @@ export default function App() {
 
         // Revert status
         for (const item of batchItems) {
-          await updateLink(user.uid, {
+          await updateLink(effectiveUid!, {
             ...item,
             aiProcessingStatus: isRateLimit ? 'queued' : 'error',
             lastErrorAt: Date.now()
@@ -317,10 +338,10 @@ export default function App() {
   }, [links, user, isQueueProcessing, queueDelay, rateLimitState]);
 
   const handleManualAiAnalysis = async (link: LinkItem) => {
-    if (!user || isQueueProcessing || rateLimitState.isInCooldown) return;
+    if (!user || !effectiveUid || isQueueProcessing || rateLimitState.isInCooldown) return;
 
     // Mark as processing immediately
-    await updateLink(user.uid, { ...link, aiProcessingStatus: 'processing' });
+    await updateLink(effectiveUid, { ...link, aiProcessingStatus: 'processing' });
     setIsQueueProcessing(true);
     setRateLimitState(prev => recordRequest(prev));
 
@@ -334,7 +355,7 @@ export default function App() {
 
       const result = results[link.id];
       if (result) {
-        await updateLink(user.uid, {
+        await updateLink(effectiveUid, {
           ...link,
           description: result.description || link.description,
           category: (result.category && result.category !== "Non categorizzato") ? result.category : link.category,
@@ -349,7 +370,7 @@ export default function App() {
       console.error("Manual AI Error:", e);
       const isRateLimit = e?.message?.includes('429');
       setRateLimitState(prev => recordError(prev, isRateLimit));
-      await updateLink(user.uid, { ...link, aiProcessingStatus: 'error' });
+      await updateLink(effectiveUid, { ...link, aiProcessingStatus: 'error' });
     } finally {
       setIsQueueProcessing(false);
     }
@@ -438,7 +459,7 @@ export default function App() {
 
     // Add to Firestore
     try {
-      await addLink(user.uid, newItem);
+      await addLink(effectiveUid!, newItem);
       setNewUrl('');
     } catch (e) {
       console.error("Error adding link:", e);
@@ -447,10 +468,10 @@ export default function App() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!user) return;
+    if (!user || !effectiveUid) return;
     if (window.confirm("Rimuovere questo tool dal Cloud?")) {
       try {
-        await deleteLink(user.uid, id);
+        await deleteLink(effectiveUid, id);
       } catch (e) {
         console.error("Delete Error", e);
       }
@@ -458,9 +479,9 @@ export default function App() {
   };
 
   const handleUpdateLink = async (updatedLink: LinkItem) => {
-    if (!user) return;
+    if (!user || !effectiveUid) return;
     try {
-      await updateLink(user.uid, updatedLink);
+      await updateLink(effectiveUid, updatedLink);
     } catch (e) {
       console.error("Update Error", e);
     }
@@ -511,9 +532,9 @@ export default function App() {
       setLoadingLinks(true);
       try {
         // 1. Wipe existing
-        await deleteAllLinks(user.uid);
+        await deleteAllLinks(effectiveUid!);
         // 2. Import new
-        await batchImportLinks(user.uid, processed);
+        await batchImportLinks(effectiveUid!, processed);
         alert("Backup ripristinato con successo (Database sostituito).");
       } catch (e) {
         console.error("Replace Error:", e);
@@ -521,14 +542,25 @@ export default function App() {
       } finally {
         setLoadingLinks(false);
       }
-      const currentUrls = new Set(links.map(l => normalizeUrl(l.url)));
-      const newItems = processed.filter((l: LinkItem) => !currentUrls.has(normalizeUrl(l.url)));
+    } else if (mode === 'merge') {
+      // Merge logic: only add items whose URL is not already in the database
+      setLoadingLinks(true);
+      try {
+        const currentUrls = new Set(links.map(l => normalizeUrl(l.url)));
+        const newItems = processed.filter((l: LinkItem) => !currentUrls.has(normalizeUrl(l.url)));
 
-      if (newItems.length > 0) {
-        await batchImportLinks(user.uid, newItems);
-        alert(`Import completato: ${newItems.length} tool aggiunti al Cloud.`);
-      } else {
-        alert("Nessun nuovo elemento da aggiungere.");
+        if (newItems.length > 0) {
+          await batchImportLinks(effectiveUid!, newItems);
+          const duplicates = processed.length - newItems.length;
+          alert(`Import completato: ${newItems.length} nuovi tool aggiunti.${duplicates > 0 ? `\n${duplicates} duplicati ignorati.` : ''}`);
+        } else {
+          alert("Nessun nuovo elemento da aggiungere (tutti già presenti nel database).");
+        }
+      } catch (e) {
+        console.error("Merge Error:", e);
+        alert("Errore durante l'import. Riprova.");
+      } finally {
+        setLoadingLinks(false);
       }
     }
   };
@@ -537,8 +569,47 @@ export default function App() {
     // Handled by onAuthStateChanged
   };
 
+  // Not logged in
   if (!user) {
     return <AuthScreen onAuthenticated={handleAuthSuccess} />;
+  }
+
+  // Checking authorization...
+  if (isAuthorized === null) {
+    return (
+      <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-emerald-400 animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Verifica autorizzazione...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Access Denied
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-[#09090b] flex items-center justify-center p-4">
+        <div className="bg-gray-900 border border-red-900/50 rounded-xl p-8 max-w-md text-center">
+          <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8 text-red-400" />
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-2">Accesso Negato</h1>
+          <p className="text-gray-400 mb-4">
+            L'account <span className="text-white font-medium">{user.email}</span> non è autorizzato ad accedere a questa applicazione.
+          </p>
+          <p className="text-sm text-gray-500 mb-6">
+            Contatta l'amministratore per richiedere l'accesso.
+          </p>
+          <button
+            onClick={() => signOut(auth)}
+            className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+          >
+            Esci
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
