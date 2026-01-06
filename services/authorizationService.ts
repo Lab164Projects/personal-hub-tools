@@ -60,10 +60,11 @@ export async function isUserAuthorized(email: string | null): Promise<boolean> {
     const normalizedEmail = email.toLowerCase().trim();
 
     // SMART CLEANER: Normalize DB entries to handle user formatting errors 
-    // (e.g. users typing "['email']" instead of just "email")
-    const allowedSet = config.emails.map(e =>
-        String(e).replace(/[\[\]"'\s]/g, '').toLowerCase()
-    );
+    // (e.g. users typing "['email']" instead of just "email" OR pasting a CSV line)
+    const allowedSet = config.emails
+        .flatMap(e => String(e).split(',')) // SPLIT merged strings (CSV case)
+        .map(e => e.replace(/[\[\]"'\s]/g, '').toLowerCase()) // Remove junk
+        .filter(e => e.length > 3); // Filter empty/short artifacts
 
     const isAllowed = allowedSet.includes(normalizedEmail);
 
