@@ -688,7 +688,19 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-100 tracking-tight">Personal Tools Hub</h1>
-                <p className="text-xs text-gray-500">Cloud Sync Active • {user.email}</p>
+                <div className="flex flex-col">
+                  <p className="text-xs text-gray-500">Cloud Sync Active • {user.email}</p>
+                  {effectiveUid && effectiveUid !== user.uid && (
+                    <p className="text-[10px] text-emerald-400 font-mono">
+                      Linked to: {effectiveUid.slice(0, 6)}...
+                    </p>
+                  )}
+                  {effectiveUid === user.uid && (
+                    <p className="text-[10px] text-gray-600 font-mono">
+                      Storage: Personal (Not Shared)
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
 

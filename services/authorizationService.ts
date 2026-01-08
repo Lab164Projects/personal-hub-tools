@@ -82,7 +82,8 @@ export async function isUserAuthorized(email: string | null): Promise<boolean> {
  */
 export async function getSharedDatabaseOwner(): Promise<string | null> {
     const config = await getAuthConfig();
-    return config?.sharedDatabaseOwner || null;
+    const owner = config?.sharedDatabaseOwner;
+    return owner ? owner.trim() : null;
 }
 
 /**
