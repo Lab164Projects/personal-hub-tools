@@ -398,27 +398,32 @@ export default function App() {
     }
   };
 
-  // Handle Search
+  const handleAiSearch = async () => {
+    if (!searchQuery.trim() || !isAiSearch) return;
+
+    setAiSearchStatus(AiStatus.LOADING);
+    try {
+      // Respect active category filter if present
+      const sourceLinks = categoryFilter
+        ? links.filter(l => l.category === categoryFilter)
+        : links;
+
+      const ids = await semanticSearch(searchQuery, sourceLinks);
+      setAiSearchResults(ids);
+      setAiSearchStatus(AiStatus.SUCCESS);
+    } catch (error) {
+      console.error("AI Search Error:", error);
+      setAiSearchStatus(AiStatus.ERROR);
+    }
+  };
+
+  // Reset results when toggling or clearing
   useEffect(() => {
-    const runSearch = async () => {
-      if (!isAiSearch || !searchQuery.trim()) {
-        setAiSearchResults([]);
-        setAiSearchStatus(AiStatus.IDLE);
-        return;
-      }
-
-      setAiSearchStatus(AiStatus.LOADING);
-      const timer = setTimeout(async () => {
-        const ids = await semanticSearch(searchQuery, links);
-        setAiSearchResults(ids);
-        setAiSearchStatus(AiStatus.SUCCESS);
-      }, 800);
-
-      return () => clearTimeout(timer);
-    };
-
-    runSearch();
-  }, [searchQuery, isAiSearch, links]); // Added links dependency for search
+    if (!isAiSearch || !searchQuery.trim()) {
+      setAiSearchResults([]);
+      setAiSearchStatus(AiStatus.IDLE);
+    }
+  }, [isAiSearch, searchQuery]);
 
   const availableCategories = useMemo(() => {
     const cats = new Set(links.map(l => l.category).filter(c => c && c !== 'Non categorizzato'));
@@ -431,9 +436,15 @@ export default function App() {
       result = result.filter(l => l.category === categoryFilter);
     }
     if (searchQuery) {
-      if (isAiSearch && aiSearchResults.length > 0) {
-        result = result.filter(l => aiSearchResults.includes(l.id));
-      } else if (!isAiSearch) {
+      if (isAiSearch) {
+        // Se IA è ON, filtriamo solo se abbiamo risultati positivi dalla ricerca semantica
+        if (aiSearchResults.length > 0) {
+          result = result.filter(l => aiSearchResults.includes(l.id));
+        }
+        // ALTRIMENTI (mentre l'utente scrive o l'IA sta caricando) NON filtriamo, 
+        // permettendo all'utente di vedere tutto o continuare a scrivere senza che le schede spariscano.
+      } else {
+        // Ricerca Standard (IA OFF): Matching testuale in tempo reale
         const q = searchQuery.toLowerCase();
         result = result.filter(l =>
           l.name.toLowerCase().includes(q) ||
@@ -763,10 +774,15 @@ export default function App() {
                 </div>
                 <input
                   type="text"
-                  placeholder={isAiSearch ? "IA: 'Trova scanner wifi...'" : "Cerca..."}
+                  placeholder={isAiSearch ? "IA: Scrivi e premi INVIO..." : "Cerca..."}
                   className="flex-1 bg-transparent border-none outline-none text-gray-200 placeholder-gray-500 text-sm h-10 w-full min-w-0"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && isAiSearch) {
+                      handleAiSearch();
+                    }
+                  }}
                 />
                 <button
                   onClick={() => setIsAiSearch(!isAiSearch)}

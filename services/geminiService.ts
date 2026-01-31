@@ -269,9 +269,32 @@ export const semanticSearch = async (query: string, items: LinkItem[]): Promise<
 
   const ai = getAiClient();
 
+  // PSEUDO-RAG: Pre-filtraggio locale per gestire grandi dataset (400+ tool)
+  // Seleziona i top 50 candidati basandosi su sovrapposizione di parole chiave
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+
+  const scoredItems = items.map(item => {
+    let score = 0;
+    const content = `${item.name} ${item.category} ${item.description} ${item.tags?.join(' ')}`.toLowerCase();
+
+    queryTerms.forEach(term => {
+      if (content.includes(term)) score += 1;
+    });
+
+    return { item, score };
+  });
+
+  // Ordina per punteggio e prendi i primi 50 (o tutti se < 50)
+  const candidates = scoredItems
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 50)
+    .map(si => si.item);
+
+  console.log(`Pseudo-RAG: Ridotto contesto da ${items.length} a ${candidates.length} candidati.`);
+
   // Inviamo una versione semplificata per risparmiare token
   // Optimize context size: limit descriptions length
-  const context = items.map(item => ({
+  const context = candidates.map(item => ({
     id: item.id,
     txt: `${item.name} (${item.category}): ${item.description.substring(0, 300)} ${item.tags?.length ? `[Tags: ${item.tags.join(', ')}]` : ''}`
   }));
