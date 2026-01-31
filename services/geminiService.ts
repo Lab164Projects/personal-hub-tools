@@ -273,16 +273,22 @@ export const semanticSearch = async (query: string, items: LinkItem[]): Promise<
   // Optimize context size: limit descriptions length
   const context = items.map(item => ({
     id: item.id,
-    txt: `${item.name} (${item.category}): ${item.description.substring(0, 100)}`
+    txt: `${item.name} (${item.category}): ${item.description.substring(0, 300)} ${item.tags?.length ? `[Tags: ${item.tags.join(', ')}]` : ''}`
   }));
 
-  const prompt = `Query Utente: "${query}"
+  const prompt = `Sei un motore di ricerca semantico esperto in Cyber Security e Tool Productivity.
+  Query Utente: "${query}"
   
-  Task: Seleziona gli ID degli strumenti dalla lista fornita che sono più rilevanti per la Query Utente.
-  Comprendi l'intento in lingua italiana (es: "wifi" dovrebbe matchare "wireless", "password" dovrebbe matchare "credentials" o "dork").
-  Restituisci SOLO un oggetto JSON con una proprietà "matchedIds" contenente un array di stringhe.
+  Task: Identifica gli strumenti dalla lista fornita che soddisfano la richiesta dell'utente.
+  REGOLE DI MATCHING:
+  - Comprendi i sinonimi (es: "audio" -> "speech", "tts", "voce", "monitoraggio" -> "sniffing", "scanning").
+  - Identifica l'INTENTO funzionale: se l'utente chiede "cosa serve per X", trova i tool che fanno X.
+  - Sii inclusivo se la query è vaga, ma preciso se è specifica.
+  - Considera il Nome, la Categoria, la Descrizione e i Tags forniti.
+
+  Restituisci esclusivamente un oggetto JSON con una proprietà "matchedIds" (array di stringhe).
   
-  Lista: ${JSON.stringify(context)}`;
+  Lista Strumenti: ${JSON.stringify(context)}`;
 
   try {
     const response = await callWithModelRotation(prompt, {
