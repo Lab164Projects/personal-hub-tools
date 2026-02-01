@@ -727,8 +727,8 @@ export default function App() {
 
             {/* Center Signature (Desktop) */}
             <div className="hidden lg:flex flex-1 justify-center">
-              <div className="px-3 py-1 bg-black/40 border border-emerald-900/20 rounded-full backdrop-blur-sm group shadow-[0_0_10px_rgba(16,185,129,0.05)]">
-                <p className="font-mono text-[9px] text-emerald-500/60 tracking-widest uppercase flex items-center gap-1.5 whitespace-nowrap">
+              <div className="px-4 py-1.5 bg-black/40 border border-emerald-900/20 rounded-full backdrop-blur-sm group shadow-[0_0_10px_rgba(16,185,129,0.05)]">
+                <p className="font-mono text-[11px] text-emerald-500/70 tracking-widest uppercase flex items-center gap-2 whitespace-nowrap">
                   <span className="w-1 h-1 bg-emerald-500/50 rounded-full animate-pulse"></span>
                   Powered by <span className="text-emerald-400/80 font-bold group-hover:text-emerald-300 transition-colors">Luca Longobardi</span> © 2025
                   <span className="w-1 h-1 bg-emerald-500/50 rounded-full animate-pulse"></span>
@@ -990,9 +990,9 @@ export default function App() {
 
       </main>
 
-      <footer className="w-full pb-8 pt-4 flex justify-center items-center">
-        <div className="px-4 py-2 bg-black/40 border border-emerald-900/30 rounded-full backdrop-blur-sm shadow-[0_0_15px_rgba(16,185,129,0.1)] transition-all hover:bg-black/60 hover:border-emerald-500/50 group">
-          <p className="font-mono text-[10px] md:text-xs text-emerald-500/80 tracking-widest uppercase flex items-center gap-2">
+      <footer className="w-full pb-10 pt-6 flex justify-center items-center">
+        <div className="px-6 py-2.5 bg-black/40 border border-emerald-900/30 rounded-full backdrop-blur-sm shadow-[0_0_15px_rgba(16,185,129,0.1)] transition-all hover:bg-black/60 hover:border-emerald-500/50 group">
+          <p className="font-mono text-xs text-emerald-500 tracking-widest uppercase flex items-center gap-3">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_#10b981]"></span>
             Powered by <span className="text-emerald-400 font-bold group-hover:text-emerald-300 transition-colors">Luca Longobardi</span> © 2025
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_#10b981]"></span>
