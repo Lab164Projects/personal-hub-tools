@@ -938,7 +938,7 @@ export default function App() {
                   Apri
                 </a>
 
-                {(link.aiProcessingStatus === 'pending' || link.aiProcessingStatus === 'error') && (
+                {link.aiProcessingStatus !== 'processing' && (
                   <button
                     onClick={() => handleManualAiAnalysis(link)}
                     disabled={isQueueProcessing || rateLimitState.isInCooldown}
