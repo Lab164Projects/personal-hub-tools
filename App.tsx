@@ -715,6 +715,17 @@ export default function App() {
               </div>
             </div>
 
+            {/* Center Signature (Desktop) */}
+            <div className="hidden lg:flex flex-1 justify-center">
+              <div className="px-3 py-1 bg-black/40 border border-emerald-900/20 rounded-full backdrop-blur-sm group shadow-[0_0_10px_rgba(16,185,129,0.05)]">
+                <p className="font-mono text-[9px] text-emerald-500/60 tracking-widest uppercase flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="w-1 h-1 bg-emerald-500/50 rounded-full animate-pulse"></span>
+                  Powered by <span className="text-emerald-400/80 font-bold group-hover:text-emerald-300 transition-colors">Luca Longobardi</span> © 2025
+                  <span className="w-1 h-1 bg-emerald-500/50 rounded-full animate-pulse"></span>
+                </p>
+              </div>
+            </div>
+
             <div className="flex items-center gap-3 w-full md:w-auto justify-end">
 
               {loadingLinks && (
