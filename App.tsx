@@ -259,13 +259,23 @@ export default function App() {
       // We pick pending/queued or error items that haven't been tried recently
       const batchItems = links
         .filter(l => {
+          // 1. New or manually queued items
           if (l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued') return true;
+
+          // 2. Error retry logic (existing)
           if (l.aiProcessingStatus === 'error') {
-            // Only retry errors if they have no description and enough time passed (5 mins)
             const fiveMins = 5 * 60 * 1000;
             const timeSinceError = Date.now() - (l.lastErrorAt || 0);
             return !l.description || l.description.includes('analisi') || timeSinceError > fiveMins;
           }
+
+          // 3. QUALITY CHECK: Even if 'done', if description is too short or tags are missing, re-process
+          if (l.aiProcessingStatus === 'done' || !l.aiProcessingStatus) {
+            const isShort = !l.description || l.description.length < 50;
+            const fewTags = !l.tags || l.tags.length < 2;
+            return isShort || fewTags;
+          }
+
           return false;
         })
         .slice(0, maxBatch);
