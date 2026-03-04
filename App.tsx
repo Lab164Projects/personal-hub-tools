@@ -308,6 +308,8 @@ export default function App() {
           let newDesc = item.description;
           let newCat = item.category;
           let newTags = item.tags;
+          let newEmoji = item.emoji;
+          let newName = item.name;
           let newStatus: 'done' | 'error' = 'done';
 
           if (result) {
@@ -321,6 +323,18 @@ export default function App() {
 
               newCat = (result.category && result.category !== "Non categorizzato") ? result.category : item.category;
               newTags = (result.tags && result.tags.length > 0) ? result.tags : item.tags;
+
+              // Apply emoji if provided
+              if (result.emoji) {
+                newEmoji = result.emoji;
+              }
+
+              // Apply suggestedName if current name is generic
+              const genericNames = ['github', 'gitlab', 'bitbucket', 'sourceforge'];
+              const aiSuggestedName = (result as any).suggestedName;
+              if (aiSuggestedName && genericNames.some(g => item.name.toLowerCase().includes(g))) {
+                newName = aiSuggestedName;
+              }
             } else {
               // AI returned error-like text. Mark as done but keep original.
               newStatus = 'done';
@@ -331,9 +345,11 @@ export default function App() {
 
           const updated = {
             ...item,
+            name: newName,
             description: newDesc,
             category: newCat,
             tags: newTags,
+            emoji: newEmoji,
             aiProcessingStatus: newStatus
           };
           await updateLink(effectiveUid!, updated);
@@ -387,11 +403,19 @@ export default function App() {
 
       const result = results[link.id];
       if (result) {
+        const genericNames = ['github', 'gitlab', 'bitbucket', 'sourceforge'];
+        const aiSuggestedName = (result as any).suggestedName;
+        const newName = (aiSuggestedName && genericNames.some(g => link.name.toLowerCase().includes(g)))
+          ? aiSuggestedName
+          : link.name;
+
         await updateLink(effectiveUid, {
           ...link,
+          name: newName,
           description: result.description || link.description,
           category: (result.category && result.category !== "Non categorizzato") ? result.category : link.category,
           tags: (result.tags && result.tags.length > 0) ? result.tags : link.tags,
+          emoji: result.emoji || link.emoji,
           aiProcessingStatus: 'done'
         });
         setRateLimitState(prev => recordSuccess(prev));
@@ -482,9 +506,24 @@ export default function App() {
 
     let name = '';
     try {
-      const hostname = new URL(url).hostname.replace(/^www\./, '');
-      const namePart = hostname.split('.')[0];
-      name = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.replace(/^www\./, '');
+      const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+      // Smart name extraction for code hosting platforms
+      const isCodeHost = ['github.com', 'gitlab.com', 'bitbucket.org'].some(h => hostname.includes(h));
+
+      if (isCodeHost && pathParts.length >= 2) {
+        // Extract project name from path: /user/project-name → Project Name
+        const projectSlug = pathParts[1].replace(/-/g, ' ').replace(/_/g, ' ');
+        name = projectSlug.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      } else if (isCodeHost && pathParts.length === 1) {
+        // Just an org/user page
+        name = pathParts[0].charAt(0).toUpperCase() + pathParts[0].slice(1);
+      } else {
+        const namePart = hostname.split('.')[0];
+        name = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+      }
     } catch {
       name = url;
     }
@@ -908,9 +947,15 @@ export default function App() {
 
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400 font-bold text-xs border border-gray-700">
-                    {link.name.substring(0, 2).toUpperCase()}
-                  </div>
+                  {link.emoji ? (
+                    <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-lg border border-gray-700">
+                      {link.emoji}
+                    </div>
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400 font-bold text-xs border border-gray-700">
+                      {link.name.substring(0, 2).toUpperCase()}
+                    </div>
+                  )}
                   <div>
                     <h3 className="text-gray-200 font-semibold leading-tight group-hover:text-emerald-400 transition-colors">
                       {link.name}

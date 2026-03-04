@@ -146,7 +146,13 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
 
   const ai = getAiClient();
   const prompt = `Analizza questo tool di sicurezza/pentesting: Nome="${name}", URL="${url}".
-  Fornisci una descrizione concisa in ITALIANO (max 25 parole), una categoria specifica (es: Threat Intelligence, OSINT, Vulnerability Scanning, Dorks, Ricerca Codice) e 3-5 tag rilevanti.
+  Fornisci:
+  - Una descrizione concisa IN ITALIANO (max 40 parole).
+  - Una categoria specifica (es: Threat Intelligence, OSINT, Vulnerability Scanning, Dorks, Ricerca Codice).
+  - 3-5 tag rilevanti.
+  - Una singola emoji tematica che rappresenti il tool (es: 🔍 per ricerca, 🛡️ per sicurezza, 📡 per networking).
+  - Se il nome fornito è generico (es: "Github", "Gitlab"), suggerisci il VERO nome del progetto/tool basandoti sull'URL.
+  RISPONDI ESCLUSIVAMENTE IN ITALIANO.
   Rispondi esclusivamente in formato JSON.`;
 
   try {
@@ -158,6 +164,8 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
           category: { type: Type.STRING },
           description: { type: Type.STRING },
           tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+          emoji: { type: Type.STRING },
+          suggestedName: { type: Type.STRING },
         },
         required: ["category", "description", "tags"],
       },
@@ -193,21 +201,25 @@ export const enrichLinksBatch = async (items: { id: string, name: string, url: s
 
   const prompt = `Sei un esperto di Cyber Security. Il tuo compito è analizzare, classificare e migliorare le descrizioni di questi strumenti.
   
+  ⚠️ REGOLA FONDAMENTALE: RISPONDI ESCLUSIVAMENTE IN ITALIANO. Tutte le descrizioni devono essere in lingua italiana.
+  
   INPUT DATA:
   ${itemsText}
 
-  REQURIEMENTS PER OGNI ITEM:
+  REQUISITI PER OGNI ITEM:
   1. Analizza l'URL e il nome.
-  2. Se "CurrentDescription" è presente e valida, RIELABORALA per renderla più professionale e concisa (max 25 parole).
-  3. Se "CurrentDescription" è vuota o inutile (es. "fallback", "error"), GENERALA da zero basandoti sul tool.
-  4. Assegna una Categoria precisa (Security, Network, Dev, OSINT, etc.).
+  2. Se "CurrentDescription" è presente e valida, RIELABORALA in ITALIANO per renderla più professionale e dettagliata (max 40 parole).
+  3. Se "CurrentDescription" è vuota, inutile, o in inglese, GENERALA da zero IN ITALIANO basandoti sul tool.
+  4. Assegna una Categoria precisa IN ITALIANO (Sicurezza, Rete, Sviluppo, OSINT, Analisi Vulnerabilità, etc.).
   5. Genera 3-5 tag tecnici.
+  6. Fornisci una singola EMOJI tematica che rappresenti il tool (es: 🔍 per ricerca, 🛡️ per sicurezza, 📡 per networking, 🕵️ per OSINT).
+  7. Se il Nome corrente è generico ("Github", "Gitlab", "Bitbucket" o simili), analizza l'URL per estrarre il VERO nome del progetto/tool e forniscilo come "suggestedName".
 
   OUTPUT:
-  Restituisci un UNICO oggetto JSON dove le chiavi sono gli ID degli item e i valori sono oggetti con { category, description, tags }.
+  Restituisci un UNICO oggetto JSON dove le chiavi sono gli ID degli item e i valori sono oggetti con { category, description, tags, emoji, suggestedName }.
   Esempio:
   {
-    "id_1": { "category": "...", "description": "...", "tags": [...] },
+    "id_1": { "category": "...", "description": "...", "tags": [...], "emoji": "🔍", "suggestedName": "Nmap" },
     "id_2": { ... }
   }`;
 

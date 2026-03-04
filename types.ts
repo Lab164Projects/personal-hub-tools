@@ -7,6 +7,7 @@ export interface LinkItem {
   description: string;
   tags: string[];
   addedAt: number;
+  emoji?: string; // Thematic emoji icon for the card
   aiProcessingStatus?: 'pending' | 'processing' | 'done' | 'error' | 'queued';
   lastErrorAt?: number; // Track when last error occurred for retry logic
 }
