@@ -82,3 +82,17 @@ export const deleteAllLinks = async (userId: string): Promise<void> => {
         throw error;
     }
 };
+
+export const batchUpdateLinkStatus = async (userId: string, linkIds: string[], status: 'queued' | 'pending' | 'processing' | 'done') => {
+    try {
+        const batch = writeBatch(db);
+        linkIds.forEach(id => {
+            const linkRef = doc(db, "users", userId, "links", id);
+            batch.update(linkRef, { aiProcessingStatus: status });
+        });
+        await batch.commit();
+    } catch (error) {
+        console.error("Error in batch status update:", error);
+        throw error;
+    }
+};

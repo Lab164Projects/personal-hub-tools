@@ -14,7 +14,8 @@ import {
   updateLink,
   deleteLink,
   batchImportLinks,
-  deleteAllLinks
+  deleteAllLinks,
+  batchUpdateLinkStatus
 } from './services/firestoreService';
 import { auth } from './services/firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
@@ -432,6 +433,24 @@ export default function App() {
     }
   };
 
+  const handleForceBulkEnrichment = async () => {
+    if (!user || !effectiveUid || links.length === 0) return;
+    
+    if (confirm(`Sei sicuro di voler forzare l'analisi di TUTTI i ${links.length} tool? Questa operazione rimpiazzerà le descrizioni attuali con nuove versioni in italiano e aggiungerà le icone emoji.`)) {
+      try {
+        setLoadingLinks(true);
+        const linkIds = links.map(l => l.id);
+        await batchUpdateLinkStatus(effectiveUid, linkIds, 'queued');
+        alert("Sincronizzazione globale avviata! I tool verranno analizzati in batch automaticamente.");
+      } catch (e) {
+        console.error("Force Bulk Error:", e);
+        alert("Errore durante l'avvio della sincronizzazione.");
+      } finally {
+        setLoadingLinks(false);
+      }
+    }
+  };
+
   const handleAiSearch = async () => {
     if (!searchQuery.trim() || !isAiSearch) return;
 
@@ -794,6 +813,16 @@ export default function App() {
               >
                 {isAutoAiEnabled ? <Sparkles className="w-5 h-5 animate-pulse" /> : <PauseCircle className="w-5 h-5" />}
                 <span className="text-xs hidden md:inline">{isAutoAiEnabled ? 'AI On' : 'AI Off'}</span>
+              </button>
+
+              <button
+                onClick={handleForceBulkEnrichment}
+                disabled={loadingLinks || isQueueProcessing || links.length === 0}
+                className="p-2 text-gray-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50"
+                title="Forza Sincronizzazione Totale (Applica Italiano, Smart Names e Emoji)"
+              >
+                <RotateCcw className={`w-5 h-5 ${loadingLinks ? 'animate-spin' : ''}`} />
+                <span className="text-xs hidden md:inline">Forza Sync</span>
               </button>
 
               <div className="w-px h-6 bg-gray-800 mx-1"></div>
