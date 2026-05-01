@@ -1,6 +1,16 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
+import {
+  PromptMode,
+  getPromptConfig,
+  buildBatchPrompt,
+  buildSinglePrompt,
+  parseBatchResponse,
+  getModeLabel,
+  type BatchPromptItem,
+  type EnrichmentResult
+} from "./promptModeService";
 
 // Accesso alla chiave e modello configurati (pressione GEMINI_ in vite.config.ts)
 const RAW_API_KEY = import.meta.env.GEMINI_API_KEY || "";
@@ -58,7 +68,7 @@ function sanitizeConfigForModel(model: string, config: any) {
   return sanitized;
 }
 
-const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
+export const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
 
 const isValidUrl = (url: string): boolean => {
   try {
@@ -124,7 +134,19 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
   throw lastError || new Error("Nessun modello disponibile");
 }
 
-export const enrichLinkData = async (name: string, url: string): Promise<Partial<LinkItem>> => {
+/**
+ * Enrichment singolo di un link tramite AI.
+ * 
+ * @param name - Nome del tool
+ * @param url - URL del tool
+ * @param mode - Modalità di prompt (default: 'caveman')
+ * @returns Dati arricchiti parziali
+ */
+export const enrichLinkData = async (
+  name: string,
+  url: string,
+  mode: PromptMode = 'caveman'
+): Promise<Partial<LinkItem>> => {
   // 1. Validation to prevent wasted calls
   if (!name || !url) return {};
   if (!isValidUrl(url) || isLocalUrl(url)) {
@@ -144,16 +166,12 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
     return cached;
   }
 
-  const ai = getAiClient();
-  const prompt = `Analizza questo tool di sicurezza/pentesting: Nome="${name}", URL="${url}".
-  Fornisci:
-  - Una descrizione concisa IN ITALIANO (max 40 parole).
-  - Una categoria specifica (es: Threat Intelligence, OSINT, Vulnerability Scanning, Dorks, Ricerca Codice).
-  - 3-5 tag rilevanti.
-  - Una singola emoji tematica che rappresenti il tool (es: 🔍 per ricerca, 🛡️ per sicurezza, 📡 per networking).
-  - Se il nome fornito è generico (es: "Github", "Gitlab"), suggerisci il VERO nome del progetto/tool basandoti sull'URL.
-  RISPONDI ESCLUSIVAMENTE IN ITALIANO.
-  Rispondi esclusivamente in formato JSON.`;
+  if (import.meta.env.DEV) {
+    console.log(`[AI] Single enrichment: ${getModeLabel(mode)} — ${name}`);
+  }
+
+  const prompt = buildSinglePrompt(name, url, mode);
+  const config = getPromptConfig(mode);
 
   try {
     const response = await callWithModelRotation(prompt, {
@@ -166,20 +184,22 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
           tags: { type: Type.ARRAY, items: { type: Type.STRING } },
           emoji: { type: Type.STRING },
           suggestedName: { type: Type.STRING },
+          confidence: { type: Type.NUMBER },
         },
         required: ["category", "description", "tags"],
       },
+      maxOutputTokens: config.maxOutputTokens,
     });
 
     const text = response.text;
     if (!text) throw new Error("Nessuna risposta dall'IA");
-    const result = JSON.parse(text);
+    const result: Partial<EnrichmentResult> = JSON.parse(text);
 
     // 3. Save to Cache
     setCachedData(cacheKey, result);
     return result;
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Errore Gemini:", error);
     throw error;
   }
@@ -189,80 +209,58 @@ export const enrichLinkData = async (name: string, url: string): Promise<Partial
  * BATCH ENRICHMENT
  * Processes up to 5 links in a single API call to save quota.
  */
-export const enrichLinksBatch = async (items: { id: string, name: string, url: string, currentDescription?: string }[]): Promise<Record<string, Partial<LinkItem>>> => {
+/**
+ * BATCH ENRICHMENT — processa più link in una singola chiamata API.
+ * Usa il promptModeService per generare il prompt e parsare la risposta.
+ * 
+ * @param items - Array di item da arricchire
+ * @param mode - Modalità di prompt (default: 'caveman' per enrichment automatico)
+ * @returns Record con ID come chiave e dati arricchiti come valore
+ */
+export const enrichLinksBatch = async (
+  items: BatchPromptItem[],
+  mode: PromptMode = 'caveman'
+): Promise<Record<string, Partial<EnrichmentResult>>> => {
   if (items.length === 0) return {};
 
-  const ai = getAiClient();
+  if (import.meta.env.DEV) {
+    console.log(`[AI] Batch enrichment: ${getModeLabel(mode)} — ${items.length} items`);
+  }
 
-  // Construct a batch prompt
-  const itemsText = items.map((item, index) =>
-    `Item ${index}: ID="${item.id}", Name="${item.name}", URL="${item.url}", CurrentDescription="${item.currentDescription || ''}"`
-  ).join('\n\n');
-
-  const prompt = `Sei un esperto di Cyber Security. Il tuo compito è analizzare, classificare e migliorare le descrizioni di questi strumenti.
-  
-  ⚠️ REGOLA FONDAMENTALE: RISPONDI ESCLUSIVAMENTE IN ITALIANO. Tutte le descrizioni devono essere in lingua italiana.
-  
-  INPUT DATA:
-  ${itemsText}
-
-  REQUISITI PER OGNI ITEM:
-  1. Analizza l'URL e il nome.
-  2. Se "CurrentDescription" è presente e valida, RIELABORALA in ITALIANO per renderla più professionale e dettagliata (max 40 parole).
-  3. Se "CurrentDescription" è vuota, inutile, o in inglese, GENERALA da zero IN ITALIANO basandoti sul tool.
-  4. Assegna una Categoria precisa IN ITALIANO (Sicurezza, Rete, Sviluppo, OSINT, Analisi Vulnerabilità, etc.).
-  5. Genera 3-5 tag tecnici.
-  6. Fornisci una singola EMOJI tematica che rappresenti il tool (es: 🔍 per ricerca, 🛡️ per sicurezza, 📡 per networking, 🕵️ per OSINT).
-  7. Se il Nome corrente è generico ("Github", "Gitlab", "Bitbucket" o simili), analizza l'URL per estrarre il VERO nome del progetto/tool e forniscilo come "suggestedName".
-
-  OUTPUT:
-  Restituisci un UNICO oggetto JSON dove le chiavi sono gli ID degli item e i valori sono oggetti con { category, description, tags, emoji, suggestedName }.
-  Esempio:
-  {
-    "id_1": { "category": "...", "description": "...", "tags": [...], "emoji": "🔍", "suggestedName": "Nmap" },
-    "id_2": { ... }
-  }`;
+  const prompt = buildBatchPrompt(items, mode);
+  const config = getPromptConfig(mode);
 
   try {
     const response = await callWithModelRotation(prompt, {
-      responseMimeType: "application/json"
+      responseMimeType: "application/json",
+      maxOutputTokens: config.maxOutputTokens,
     });
 
     const text = response.text;
-    console.log("Raw Batch AI Response:", text);
+    if (import.meta.env.DEV) {
+      console.log("Raw Batch AI Response:", text);
+    }
     if (!text) {
       console.warn("AI returned empty text. This might be a quota block or safety filter.");
       throw new Error("Risposta Batch Vuota");
     }
 
-    // Parse and handle potential casing issues with IDs from AI
-    let rawResult;
+    // Parse and normalize using promptModeService
     try {
-      rawResult = JSON.parse(text);
+      return parseBatchResponse(text, items, mode);
     } catch (pe) {
       console.error("JSON Parse Error on AI response:", text);
       throw new Error("Errore nel formato dei dati IA");
     }
 
-    const normalizedResult: Record<string, Partial<LinkItem>> = {};
-
-    // Ensure we match the original IDs correctly even if AI changed them
-    for (const key in rawResult) {
-      const originalItem = items.find(it => it.id.toLowerCase() === key.toLowerCase());
-      if (originalItem) {
-        normalizedResult[originalItem.id] = rawResult[key];
-      }
-    }
-
-    return normalizedResult;
-
-  } catch (error: any) {
-    const isQuota = error.message?.includes('429') || error.status === 429;
+  } catch (error: unknown) {
+    const err = error as { message?: string; status?: number; details?: unknown };
+    const isQuota = err.message?.includes('429') || err.status === 429;
     console.error("Errore Dettagliato Gemini:", {
-      message: error.message,
+      message: err.message,
       isQuota: isQuota,
-      status: error.status,
-      details: error.details
+      status: err.status,
+      details: err.details
     });
     throw error;
   }

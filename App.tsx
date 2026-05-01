@@ -7,7 +7,9 @@ import {
   Clock, PauseCircle, LogIn
 } from 'lucide-react';
 import { LinkItem, AiStatus, UserConfig } from './types';
-import { enrichLinkData, semanticSearch, enrichLinksBatch, getMaxBatchSize } from './services/geminiService';
+import { enrichLinkData, enrichLinksBatch, getMaxBatchSize, getAiClient } from './services/geminiService';
+import { semanticSearchV2, getRelevanceBadge } from './services/semanticSearchService';
+import { SearchScore } from './types/search';
 import {
   subscribeToLinks,
   addLink,
@@ -31,6 +33,11 @@ import {
   formatCooldownTime,
 } from './services/rateLimitService';
 import { isUserAuthorized, getSharedDatabaseOwner, getAuthDebugInfo } from './services/authorizationService';
+import { PromptMode } from './services/promptModeService';
+import { migrateV1ToV2, getMigrationStatus } from './services/migrationService';
+import { evaluateCardQuality } from './services/descriptionQualityService';
+import { ENRICHMENT_PROMPT_VERSION, ToolCardV2 } from './types/toolCard';
+import AiModeBadge from './components/AiModeBadge';
 import ImportModal from './components/ImportModal';
 import AuthScreen from './components/AuthScreen';
 import EditModal from './components/EditModal';
@@ -113,6 +120,7 @@ export default function App() {
 
   const [isAiSearch, setIsAiSearch] = useState(false);
   const [aiSearchResults, setAiSearchResults] = useState<string[]>([]);
+  const [searchScores, setSearchScores] = useState<SearchScore[]>([]);
   const [aiSearchStatus, setAiSearchStatus] = useState<AiStatus>(AiStatus.IDLE);
 
   // New Item Form
@@ -129,6 +137,9 @@ export default function App() {
   const [isAutoAiEnabled, setIsAutoAiEnabled] = useState(() => {
     return localStorage.getItem('auto_ai_enabled') !== 'false'; // Default true
   });
+
+  // BMAD FASE 1: Active AI Mode (caveman = auto enrichment, premium = force sync/manual)
+  const [activeAiMode, setActiveAiMode] = useState<PromptMode>('caveman');
 
   // Rate Limiting State
   const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => loadRateLimitState());
@@ -235,6 +246,25 @@ export default function App() {
     return () => clearInterval(interval);
   }, [rateLimitState.isInCooldown, rateLimitState.cooldownUntil]);
 
+  // --- AUTO MIGRATION v1 → v2 (BMAD FASE 2) ---
+  useEffect(() => {
+    if (!user || !effectiveUid || links.length === 0 || isQueueProcessing) return;
+
+    const status = getMigrationStatus(links);
+    if (!status.migrationNeeded) return;
+
+    console.log(`[BMAD] Migration needed: ${status.v1Count}/${status.total} cards at v1`);
+
+    // Run migration silently in the background
+    migrateV1ToV2(effectiveUid, links, (progress) => {
+      if (progress.phase === 'complete') {
+        console.log(`[BMAD] Migration complete: ${status.v1Count} cards upgraded to v2`);
+      }
+    }).catch(err => {
+      console.error('[BMAD] Migration error:', err);
+    });
+  }, [links.length, effectiveUid]); // Only trigger when link count changes
+
   // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
   useEffect(() => {
     if (!user || isQueueProcessing || !isAutoAiEnabled) return;
@@ -284,6 +314,7 @@ export default function App() {
       if (batchItems.length === 0) return;
 
       setIsQueueProcessing(true);
+      setActiveAiMode('caveman'); // Auto-enrichment uses fast mode
 
       // Mark batch as processing
       for (const item of batchItems) {
@@ -300,7 +331,7 @@ export default function App() {
           currentDescription: item.description
         }));
 
-        const results = await enrichLinksBatch(itemsPayload);
+        const results = await enrichLinksBatch(itemsPayload, 'caveman');
 
         // Process results
         for (const item of batchItems) {
@@ -332,9 +363,8 @@ export default function App() {
 
               // Apply suggestedName if current name is generic
               const genericNames = ['github', 'gitlab', 'bitbucket', 'sourceforge'];
-              const aiSuggestedName = (result as any).suggestedName;
-              if (aiSuggestedName && genericNames.some(g => item.name.toLowerCase().includes(g))) {
-                newName = aiSuggestedName;
+              if (result.suggestedName && genericNames.some(g => item.name.toLowerCase().includes(g))) {
+                newName = result.suggestedName;
               }
             } else {
               // AI returned error-like text. Mark as done but keep original.
@@ -344,7 +374,7 @@ export default function App() {
             newStatus = 'error';
           }
 
-          const updated = {
+          const updated: Record<string, unknown> = {
             ...item,
             name: newName,
             description: newDesc,
@@ -353,17 +383,38 @@ export default function App() {
             emoji: newEmoji,
             aiProcessingStatus: newStatus
           };
-          await updateLink(effectiveUid!, updated);
+
+          // BMAD FASE 2: Save v2 fields if returned by AI
+          if (result) {
+            if (result.shortDescription) updated.shortDescription = result.shortDescription;
+            if (result.categoryPath) updated.categoryPath = result.categoryPath;
+            if (result.useCases && result.useCases.length > 0) updated.useCases = result.useCases;
+            if (result.targetAudience) updated.targetAudience = result.targetAudience;
+            if (result.toolLanguage) updated.toolLanguage = result.toolLanguage;
+            if (result.toolStatus) updated.toolStatus = result.toolStatus;
+            if (result.conceptFingerprint && result.conceptFingerprint.length > 0) updated.conceptFingerprint = result.conceptFingerprint;
+            if (result.enrichedTags && result.enrichedTags.length > 0) updated.enrichedTags = result.enrichedTags;
+            
+            // Calculate real quality score instead of just using AI confidence
+            const realQuality = evaluateCardQuality({ ...item, ...updated } as Partial<ToolCardV2>);
+            updated.enrichmentConfidence = realQuality;
+            
+            updated.enrichmentPromptVersion = ENRICHMENT_PROMPT_VERSION;
+            updated.lastEnrichedAt = Date.now();
+          }
+
+          await updateLink(effectiveUid!, updated as LinkItem);
         }
 
         setRateLimitState(prev => recordSuccess(prev));
         if (queueDelay > 4000) setQueueDelay(4000);
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Batch Enrichment Failed:", error);
 
-        const isRateLimit = error?.message?.includes('429') ||
-          error?.message?.toLowerCase().includes('rate');
+        const err = error as { message?: string };
+        const isRateLimit = err?.message?.includes('429') ||
+          err?.message?.toLowerCase().includes('rate');
 
         setRateLimitState(prev => recordError(prev, isRateLimit));
 
@@ -392,6 +443,7 @@ export default function App() {
     // Mark as processing immediately
     await updateLink(effectiveUid, { ...link, aiProcessingStatus: 'processing' });
     setIsQueueProcessing(true);
+    setActiveAiMode('premium'); // Manual analysis uses premium mode
     setRateLimitState(prev => recordRequest(prev));
 
     try {
@@ -400,14 +452,13 @@ export default function App() {
         name: link.name,
         url: link.url,
         currentDescription: link.description
-      }]);
+      }], 'premium');
 
       const result = results[link.id];
       if (result) {
         const genericNames = ['github', 'gitlab', 'bitbucket', 'sourceforge'];
-        const aiSuggestedName = (result as any).suggestedName;
-        const newName = (aiSuggestedName && genericNames.some(g => link.name.toLowerCase().includes(g)))
-          ? aiSuggestedName
+        const newName = (result.suggestedName && genericNames.some(g => link.name.toLowerCase().includes(g)))
+          ? result.suggestedName
           : link.name;
 
         await updateLink(effectiveUid, {
@@ -423,9 +474,9 @@ export default function App() {
       } else {
         throw new Error("Nessun risultato");
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Manual AI Error:", e);
-      const isRateLimit = e?.message?.includes('429');
+      const isRateLimit = (e as { message?: string })?.message?.includes('429') ?? false;
       setRateLimitState(prev => recordError(prev, isRateLimit));
       await updateLink(effectiveUid, { ...link, aiProcessingStatus: 'error' });
     } finally {
@@ -436,12 +487,13 @@ export default function App() {
   const handleForceBulkEnrichment = async () => {
     if (!user || !effectiveUid || links.length === 0) return;
     
-    if (confirm(`Sei sicuro di voler forzare l'analisi di TUTTI i ${links.length} tool? Questa operazione rimpiazzerà le descrizioni attuali con nuove versioni in italiano e aggiungerà le icone emoji.`)) {
+    if (confirm(`🧠 PREMIUM SYNC\n\nSei sicuro di voler forzare l'analisi di TUTTI i ${links.length} tool?\n\nModalità: PREMIUM (prompt espansi, qualità massima)\nQuesta operazione rimpiazzerà le descrizioni con versioni professionali in italiano.`)) {
       try {
         setLoadingLinks(true);
+        setActiveAiMode('premium'); // Force sync uses premium mode
         const linkIds = links.map(l => l.id);
         await batchUpdateLinkStatus(effectiveUid, linkIds, 'queued');
-        alert("Sincronizzazione globale avviata! I tool verranno analizzati in batch automaticamente.");
+        alert("🧠 Premium Sync avviata! I tool verranno analizzati con prompt espansi.");
       } catch (e) {
         console.error("Force Bulk Error:", e);
         alert("Errore durante l'avvio della sincronizzazione.");
@@ -461,8 +513,18 @@ export default function App() {
         ? links.filter(l => l.category === categoryFilter)
         : links;
 
-      const ids = await semanticSearch(searchQuery, sourceLinks);
-      setAiSearchResults(ids);
+      const { results, matchedIds } = await semanticSearchV2(
+        searchQuery,
+        sourceLinks,
+        async (prompt) => {
+          const ai = getAiClient();
+          const result = await ai.generateContent(prompt);
+          return result.response.text();
+        }
+      );
+
+      setAiSearchResults(matchedIds);
+      setSearchScores(results);
       setAiSearchStatus(AiStatus.SUCCESS);
     } catch (error) {
       console.error("AI Search Error:", error);
@@ -493,9 +555,13 @@ export default function App() {
         // Se IA è ON, filtriamo solo se abbiamo risultati positivi dalla ricerca semantica
         if (aiSearchResults.length > 0) {
           result = result.filter(l => aiSearchResults.includes(l.id));
+          // Ordinamento per score di rilevanza
+          result = [...result].sort((a, b) => {
+            const scoreA = searchScores.find(s => s.cardId === a.id)?.totalScore || 0;
+            const scoreB = searchScores.find(s => s.cardId === b.id)?.totalScore || 0;
+            return scoreB - scoreA;
+          });
         }
-        // ALTRIMENTI (mentre l'utente scrive o l'IA sta caricando) NON filtriamo, 
-        // permettendo all'utente di vedere tutto o continuare a scrivere senza che le schede spariscano.
       } else {
         // Ricerca Standard (IA OFF): Matching testuale in tempo reale
         const q = searchQuery.toLowerCase();
@@ -508,7 +574,7 @@ export default function App() {
       }
     }
     return result;
-  }, [links, searchQuery, isAiSearch, aiSearchResults, categoryFilter]);
+  }, [links, searchQuery, isAiSearch, aiSearchResults, searchScores, categoryFilter]);
 
   const handleAddLink = async () => {
     if (!newUrl.trim() || !user) return;
@@ -928,6 +994,11 @@ export default function App() {
         <div className="flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider font-semibold">
           <div className="flex items-center gap-4">
             <span>{filteredLinks.length} Strumenti Cloud</span>
+            <AiModeBadge
+              mode={activeAiMode}
+              isActive={isQueueProcessing}
+              itemsCount={links.filter(l => l.aiProcessingStatus === 'processing' || l.aiProcessingStatus === 'queued').length}
+            />
             {cooldownDisplay && (
               <span className="flex items-center gap-1 text-orange-400 normal-case">
                 <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
@@ -971,6 +1042,26 @@ export default function App() {
               {link.aiProcessingStatus === 'queued' && (
                 <div className="absolute top-0 right-0 p-2" title="In attesa - API rate limited">
                   <Clock className="w-4 h-4 text-yellow-500" />
+                </div>
+              )}
+
+              {/* Semantic Relevance Badge */}
+              {isAiSearch && searchQuery && (
+                <div className="absolute top-0 right-0 p-2 flex flex-col items-end gap-1">
+                  {(() => {
+                    const score = searchScores.find(s => s.cardId === link.id);
+                    if (!score) return null;
+                    const badge = getRelevanceBadge(score.relevanceLabel);
+                    return (
+                      <div 
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border backdrop-blur-md shadow-lg ${badge.colorClass}`}
+                        title={`Score: ${(score.totalScore * 100).toFixed(1)}%`}
+                      >
+                        <span>{badge.emoji}</span>
+                        <span>{badge.text}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1021,6 +1112,28 @@ export default function App() {
                   </span>
                 ))}
               </div>
+
+              {/* Quality Confidence Indicator (Subtle) */}
+              {(link as ToolCardV2).enrichmentConfidence !== undefined && (link as ToolCardV2).enrichmentConfidence! < 0.6 && (
+                <div className="mb-4 flex items-center gap-2">
+                  <div className="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ${(link as ToolCardV2).enrichmentConfidence! < 0.3 ? 'bg-red-500' : 'bg-orange-500'}`}
+                      style={{ width: `${(link as ToolCardV2).enrichmentConfidence! * 100}%` }}
+                    ></div>
+                  </div>
+                  <span className="text-[9px] text-gray-500 uppercase font-bold tracking-tighter">Qualità Bassa</span>
+                  <button 
+                    onClick={() => processLinkEnrichment(link)}
+                    className="p-1 rounded bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20 transition-colors"
+                    title="Migliora qualità con Premium AI"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
 
               <div className="mt-auto flex gap-2">
                 <a

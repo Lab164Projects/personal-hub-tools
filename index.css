@@ -23,9 +23,30 @@ body {
   min-height: 100vh;
   background-color: #09090b;
   color: #fafafa;
+  font-family: 'Inter', sans-serif;
 }
 
 #root {
   width: 100%;
   min-height: 100vh;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom scrollbar for cyber feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #18181b;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
 }
