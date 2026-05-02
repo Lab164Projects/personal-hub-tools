@@ -93,7 +93,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, currentUse
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Email Connessa</label>
             <div className="text-gray-200 font-mono text-sm flex items-center gap-2">
               {currentUser.email}
-              {auth.currentUser?.emailVerified && <CheckCircle className="w-4 h-4 text-emerald-500" title="Verificata" />}
+              {auth.currentUser?.emailVerified && <span title="Verificata"><CheckCircle className="w-4 h-4 text-emerald-500" /></span>}
             </div>
             <div className="mt-2 text-xs text-gray-500">
               UID: <span className="font-mono text-[10px]">{auth.currentUser?.uid}</span>

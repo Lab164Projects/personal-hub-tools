@@ -598,5 +598,5 @@ semanticSearchService.ts    → nuovo algoritmo multi-field scoring
 
 *Documento generato per il team BMAD di Personal Tools Hub. Ogni agente deve confermare la lettura di questo brief prima di iniziare la propria storia assegnata. Usare i commenti BMAD standard per comunicare blocchi, dipendenze e completion.*
 
-**Status iniziale:** 🔴 Not Started  
-**Prossimo step:** PM Agent valida il brief → Architect Agent inizia Story 2.1 (schema) in parallelo con Developer Agent su Story 1.1 (promptModeService)
+**Status iniziale:** ✅ COMPLETED
+**Prossimo step:** Manutenzione e monitoraggio performance.

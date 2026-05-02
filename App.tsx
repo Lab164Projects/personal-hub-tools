@@ -1,15 +1,16 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   Search, Plus, Sparkles, Download, Upload, Trash2,
   ExternalLink, Server, Globe, Shield, Wifi, Code,
   RotateCcw, Save, SearchCode, Cpu, Loader2,
   Pencil, AlertCircle, User as UserIcon, Filter, Cloud,
-  Clock, PauseCircle, LogIn
+  Clock, PauseCircle, LogIn, LogOut, CheckCircle2, ChevronRight,
+  Database, Zap, Brain, Menu, X, Info
 } from 'lucide-react';
 import { LinkItem, AiStatus, UserConfig } from './types';
-import { enrichLinkData, enrichLinksBatch, getMaxBatchSize, getAiClient } from './services/geminiService';
+import { enrichLinksBatch, getMaxBatchSize, getAiClient } from './services/geminiService';
 import { semanticSearchV2, getRelevanceBadge } from './services/semanticSearchService';
-import { SearchScore } from './types/search';
+import { SearchScore, SearchIntent } from './types/search';
 import {
   subscribeToLinks,
   addLink,
@@ -55,7 +56,6 @@ const normalizeUrl = (url: string): string => {
 };
 
 const CategoryBadge: React.FC<{ category: string }> = ({ category }) => {
-  // Generate a consistent color based on the category string
   const getColor = (str: string) => {
     const colors = [
       "bg-red-900/30 text-red-200 border-red-900/50",
@@ -88,7 +88,6 @@ const CategoryBadge: React.FC<{ category: string }> = ({ category }) => {
 
   const colorClass = getColor(category || 'default');
 
-  // Icon mapping (optional, keep basic logic or just use generic)
   let Icon = Globe;
   const lower = (category || '').toLowerCase();
 
@@ -110,8 +109,8 @@ const CategoryBadge: React.FC<{ category: string }> = ({ category }) => {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null); // null = checking
-  const [effectiveUid, setEffectiveUid] = useState<string | null>(null); // Shared DB owner UID
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null); 
+  const [effectiveUid, setEffectiveUid] = useState<string | null>(null); 
   const [loadingLinks, setLoadingLinks] = useState(false);
 
   const [links, setLinks] = useState<LinkItem[]>([]);
@@ -122,67 +121,52 @@ export default function App() {
   const [isAiSearch, setIsAiSearch] = useState(false);
   const [aiSearchResults, setAiSearchResults] = useState<string[]>([]);
   const [searchScores, setSearchScores] = useState<SearchScore[]>([]);
+  const [searchIntent, setSearchIntent] = useState<SearchIntent | null>(null);
+  
+  const lastManualPremiumTrigger = useRef<number>(0);
   const [aiSearchStatus, setAiSearchStatus] = useState<AiStatus>(AiStatus.IDLE);
 
-  // New Item Form
   const [newUrl, setNewUrl] = useState('');
 
-  // Modals
   const [showImportModal, setShowImportModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingLink, setEditingLink] = useState<LinkItem | null>(null);
 
-  // AI Queue
-  const [queueDelay, setQueueDelay] = useState(2000); // 2s initial delay
+  const [queueDelay, setQueueDelay] = useState(2000); 
   const [isQueueProcessing, setIsQueueProcessing] = useState(false);
   const [isAutoAiEnabled, setIsAutoAiEnabled] = useState(() => {
-    return localStorage.getItem('auto_ai_enabled') !== 'false'; // Default true
+    return localStorage.getItem('auto_ai_enabled') !== 'false'; 
   });
 
-  // BMAD FASE 1: Active AI Mode (caveman = auto enrichment, premium = force sync/manual)
   const [activeAiMode, setActiveAiMode] = useState<PromptMode>('caveman');
 
-  // Rate Limiting State
   const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => loadRateLimitState());
   const [cooldownDisplay, setCooldownDisplay] = useState('');
 
-  // --- AUTH & DATA SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
 
       if (currentUser) {
-        // Check authorization
-        setIsAuthorized(null); // Reset to loading
-        console.log("Checking authorization for:", currentUser.email);
-
+        setIsAuthorized(null);
         try {
           const authorized = await isUserAuthorized(currentUser.email);
-          console.log("Authorization Result:", authorized);
           setIsAuthorized(authorized);
 
-          if (!authorized) {
-            console.warn(`User ${currentUser.email} is NOT authorized. Access denied.`);
-            return;
-          }
+          if (!authorized) return;
         } catch (authErr) {
-          console.error("Authorization check failed:", authErr);
-          setIsAuthorized(false); // Default to Deny
+          setIsAuthorized(false);
           return;
         }
 
-        // Get shared database owner UID
         const sharedOwner = await getSharedDatabaseOwner();
         const uidToUse = sharedOwner || currentUser.uid;
         setEffectiveUid(uidToUse);
-        console.log(`Using database UID: ${uidToUse} (shared: ${sharedOwner ? 'yes' : 'no'})`);
 
         setLoadingLinks(true);
-        // Subscribe to Firestore updates using effective UID
         const unsubLinks = subscribeToLinks(
           uidToUse,
           (remoteLinks) => {
-            // AUTO-MIGRATION CHECK (only for owner)
             if (remoteLinks.length === 0 && uidToUse === currentUser.uid) {
               const local = localStorage.getItem('personal_hub_links');
               if (local) {
@@ -213,19 +197,15 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- AUTO LOGOUT UNAUTHORIZED USER ---
   useEffect(() => {
     if (isAuthorized === false && user) {
-      console.log("Unauthorized user detected. Scheduling logout in 5s...");
       const timer = setTimeout(() => {
-        console.log("Executing auto sign-out now.");
         signOut(auth);
       }, 5000);
       return () => clearTimeout(timer);
     }
   }, [isAuthorized, user]);
 
-  // --- COOLDOWN TIMER ---
   useEffect(() => {
     if (!rateLimitState.isInCooldown) {
       setCooldownDisplay('');
@@ -247,16 +227,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [rateLimitState.isInCooldown, rateLimitState.cooldownUntil]);
 
-  // --- AUTO MIGRATION v1 → v2 (BMAD FASE 2) ---
   useEffect(() => {
     if (!user || !effectiveUid || links.length === 0 || isQueueProcessing) return;
 
     const status = getMigrationStatus(links);
     if (!status.migrationNeeded) return;
 
-    console.log(`[BMAD] Migration needed: ${status.v1Count}/${status.total} cards at v1`);
-
-    // Run migration silently in the background
     migrateV1ToV2(effectiveUid, links, (progress) => {
       if (progress.phase === 'complete') {
         console.log(`[BMAD] Migration complete: ${status.v1Count} cards upgraded to v2`);
@@ -264,57 +240,33 @@ export default function App() {
     }).catch(err => {
       console.error('[BMAD] Migration error:', err);
     });
-  }, [links.length, effectiveUid]); // Only trigger when link count changes
+  }, [links.length, effectiveUid]); 
 
-  // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
   useEffect(() => {
     if (!user || isQueueProcessing) return;
     
     const shouldProcess = isAutoAiEnabled || activeAiMode === 'premium';
-    if (!shouldProcess) {
-      // Log occasionally to avoid spam
-      if (Math.random() < 0.1) console.log("[AI Worker] Idle - Auto AI OFF and not in Premium mode.");
-      return;
-    }
+    if (!shouldProcess || rateLimitState.isInCooldown) return;
 
-    // STOP IMMEDIATELY if in cooldown. Do not write to Firestore.
-    // The UI handles the visual indication of "Queued" or "Cooldown".
-    if (rateLimitState.isInCooldown) {
-      return;
-    }
-
-    // Double check rate limit state before firing
-    if (!canMakeRequest(rateLimitState)) {
-      console.log(`[AI Worker] Rate limit reached (${rateLimitState.requestsThisMinute} req/min), waiting...`);
-      return;
-    }
+    if (!canMakeRequest(rateLimitState)) return;
 
     const timer = setTimeout(async () => {
-      // Re-check inside timeout
       if (rateLimitState.isInCooldown) return;
 
-      // GET BATCH - Use dynamic size based on model token limits
       const maxBatch = getMaxBatchSize();
-      // We pick pending/queued or error items that haven't been tried recently
       const batchItems = links
         .filter(l => {
-          // 1. New or manually queued items
           if (l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued') return true;
-
-          // 2. Error retry logic (existing)
           if (l.aiProcessingStatus === 'error') {
             const fiveMins = 5 * 60 * 1000;
             const timeSinceError = Date.now() - (l.lastErrorAt || 0);
             return !l.description || l.description.includes('analisi') || timeSinceError > fiveMins;
           }
-
-          // 3. QUALITY CHECK: Even if 'done', if description is too short or tags are missing, re-process
           if (l.aiProcessingStatus === 'done' || !l.aiProcessingStatus) {
-            const isShort = !l.description || l.description.length < 50;
-            const fewTags = !l.tags || l.tags.length < 2;
-            return isShort || fewTags;
+            const threshold = activeAiMode === 'premium' ? 0.85 : 0.6;
+            const quality = l.enrichmentConfidence ?? evaluateCardQuality(l as Partial<ToolCardV2>);
+            return quality < threshold;
           }
-
           return false;
         })
         .slice(0, maxBatch);
@@ -322,12 +274,8 @@ export default function App() {
       if (batchItems.length === 0) return;
 
       setIsQueueProcessing(true);
-      // Respect the active mode (e.g. if set to 'premium' by force sync)
       const currentMode = activeAiMode; 
       
-      console.log(`[AI Worker] Processing ${batchItems.length} items in ${currentMode} mode...`);
-      
-      // Mark batch as processing
       for (const item of batchItems) {
         await updateLink(effectiveUid!, { ...item, aiProcessingStatus: 'processing' });
       }
@@ -344,7 +292,6 @@ export default function App() {
 
         const results = await enrichLinksBatch(itemsPayload, currentMode);
 
-        // Process results
         for (const item of batchItems) {
           const result = results[item.id];
 
@@ -359,26 +306,17 @@ export default function App() {
             const isAiError = result.description?.includes("non disponibile") || result.category?.includes("Errore");
 
             if (!isAiError) {
-              // SIMPLIFIED LOGIC: Always use AI result if available and valid.
               if (result.description && result.description.length > 5) {
                 newDesc = result.description;
               }
-
               newCat = (result.category && result.category !== "Non categorizzato") ? result.category : item.category;
               newTags = (result.tags && result.tags.length > 0) ? result.tags : item.tags;
-
-              // Apply emoji if provided
-              if (result.emoji) {
-                newEmoji = result.emoji;
-              }
-
-              // Apply suggestedName if current name is generic
+              if (result.emoji) newEmoji = result.emoji;
               const genericNames = ['github', 'gitlab', 'bitbucket', 'sourceforge'];
               if (result.suggestedName && genericNames.some(g => item.name.toLowerCase().includes(g))) {
                 newName = result.suggestedName;
               }
             } else {
-              // AI returned error-like text. Mark as done but keep original.
               newStatus = 'done';
             }
           } else {
@@ -395,7 +333,6 @@ export default function App() {
             aiProcessingStatus: newStatus
           };
 
-          // BMAD FASE 2: Save v2 fields if returned by AI
           if (result) {
             if (result.shortDescription) updated.shortDescription = result.shortDescription;
             if (result.categoryPath) updated.categoryPath = result.categoryPath;
@@ -406,7 +343,6 @@ export default function App() {
             if (result.conceptFingerprint && result.conceptFingerprint.length > 0) updated.conceptFingerprint = result.conceptFingerprint;
             if (result.enrichedTags && result.enrichedTags.length > 0) updated.enrichedTags = result.enrichedTags;
             
-            // Calculate real quality score instead of just using AI confidence
             const realQuality = evaluateCardQuality({ ...item, ...updated } as Partial<ToolCardV2>);
             updated.enrichmentConfidence = realQuality;
             
@@ -414,7 +350,7 @@ export default function App() {
             updated.lastEnrichedAt = Date.now();
           }
 
-          await updateLink(effectiveUid!, updated as LinkItem);
+          await updateLink(effectiveUid!, updated as unknown as LinkItem);
         }
 
         setRateLimitState(prev => recordSuccess(prev));
@@ -450,10 +386,19 @@ export default function App() {
 
   // BMAD: Logic to reset premium mode to caveman when no more queued items
   useEffect(() => {
+    // Prevent reset if a manual trigger happened recently (within 15s)
+    const timeSinceManual = Date.now() - lastManualPremiumTrigger.current;
+    if (timeSinceManual < 15000) return;
+
     if (activeAiMode === 'premium' && !isQueueProcessing) {
-      const hasQueued = links.some(l => l.aiProcessingStatus === 'queued' || l.aiProcessingStatus === 'pending');
+      const hasQueued = links.some(l => 
+        l.aiProcessingStatus === 'queued' || 
+        l.aiProcessingStatus === 'pending' ||
+        (l.enrichmentConfidence !== undefined && l.enrichmentConfidence < 0.8)
+      );
+      
       if (!hasQueued) {
-        console.log("[AI Worker] All items processed. Resetting to Caveman mode.");
+        console.log("[AI Worker] All items processed or high quality. Resetting to Caveman mode.");
         setActiveAiMode('caveman');
       }
     }
@@ -530,6 +475,7 @@ export default function App() {
     if (confirm(`🧠 PREMIUM SYNC\n\nSei sicuro di voler forzare l'analisi di TUTTI i ${links.length} tool?\n\nModalità: PREMIUM (prompt espansi, qualità massima)\nQuesta operazione rimpiazzerà le descrizioni con versioni professionali in italiano.`)) {
       try {
         setLoadingLinks(true);
+        lastManualPremiumTrigger.current = Date.now();
         setActiveAiMode('premium'); // Force sync uses premium mode
         
         // Reset worker state to start immediately
@@ -543,8 +489,9 @@ export default function App() {
         // Sblocca esplicitamente il worker forzando un cambiamento di stato se necessario
         setTimeout(() => {
           setIsQueueProcessing(false);
+          lastManualPremiumTrigger.current = Date.now(); // Refresh timestamp
           console.log("[AI] Force Bulk Sync initiated and worker unlocked.");
-        }, 100);
+        }, 500);
 
         alert("🧠 Premium Sync avviata! I tool verranno analizzati con prompt espansi.");
       } catch (e) {
@@ -566,18 +513,33 @@ export default function App() {
         ? links.filter(l => l.category === categoryFilter)
         : links;
 
-      const { results, matchedIds } = await semanticSearchV2(
+      const { results, matchedIds, intent } = await semanticSearchV2(
         searchQuery,
         sourceLinks,
         async (prompt) => {
           const ai = getAiClient();
-          const result = await ai.generateContent(prompt);
-          return result.response.text();
+          const response = await ai.models.generateContent({
+            model: "gemini-1.5-flash",
+            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+          });
+          
+          // Estrazione testo robusta (BMAD logic - bracket notation to bypass TS getter checks)
+          let text = "";
+          const anyResp = response as any;
+          if (anyResp.candidates?.[0]?.content?.parts?.[0]?.text) {
+            text = anyResp.candidates[0].content.parts[0].text;
+          } else if (typeof anyResp['text'] === 'function') {
+            text = await anyResp['text']();
+          } else {
+            text = anyResp.text || "";
+          }
+          return text;
         }
       );
 
       setAiSearchResults(matchedIds);
       setSearchScores(results);
+      setSearchIntent(intent);
       setAiSearchStatus(AiStatus.SUCCESS);
     } catch (error) {
       console.error("AI Search Error:", error);
@@ -589,6 +551,7 @@ export default function App() {
   useEffect(() => {
     if (!isAiSearch || !searchQuery.trim()) {
       setAiSearchResults([]);
+      setSearchIntent(null);
       setAiSearchStatus(AiStatus.IDLE);
     }
   }, [isAiSearch, searchQuery]);
@@ -1070,9 +1033,16 @@ export default function App() {
             )}
           </div>
           {(searchQuery || categoryFilter) && (
-            <span>
-              Filtri: {categoryFilter ? categoryFilter : 'Tutti'} • {isAiSearch ? 'Semantico' : 'Keyword'}
-            </span>
+            <div className="flex flex-col items-end gap-1">
+              <span>
+                Filtri: {categoryFilter ? categoryFilter : 'Tutti'} • {isAiSearch ? 'Semantico' : 'Keyword'}
+              </span>
+              {isAiSearch && searchIntent && (
+                <span className="text-[10px] text-emerald-500/70 lowercase font-mono">
+                  Intento: {searchIntent.intent}
+                </span>
+              )}
+            </div>
           )}
         </div>
 
@@ -1199,20 +1169,18 @@ export default function App() {
                   Apri
                 </a>
 
-                {link.aiProcessingStatus !== 'processing' && (
-                  <button
-                    onClick={() => handleManualAiAnalysis(link)}
-                    disabled={isQueueProcessing || rateLimitState.isInCooldown}
-                    className="px-3 py-2 bg-emerald-900/20 hover:bg-emerald-900/40 border border-emerald-800/50 rounded-lg text-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Analizza con IA"
-                  >
-                    {isQueueProcessing && link.aiProcessingStatus === 'processing' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-4 h-4" />
-                    )}
-                  </button>
-                )}
+                <button
+                  onClick={() => handleManualAiAnalysis(link)}
+                  disabled={isQueueProcessing || rateLimitState.isInCooldown || link.aiProcessingStatus === 'processing'}
+                  className="px-3 py-2 bg-emerald-900/20 hover:bg-emerald-900/40 border border-emerald-800/50 rounded-lg text-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={link.aiProcessingStatus === 'processing' ? "Analisi in corso..." : "Analizza con IA"}
+                >
+                  {link.aiProcessingStatus === 'processing' ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                </button>
               </div>
             </div>
           ))}

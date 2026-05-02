@@ -33,6 +33,62 @@ const LOW_QUALITY_KEYWORDS = new Set([
   'disponibile', 'potente', 'fantastico', 'migliore'
 ]);
 
+/**
+ * Prompt specializzati per categoria (BMAD FASE 4)
+ */
+export const CATEGORY_PROMPTS: Record<string, string> = {
+  'Recon': `
+    Stai descrivendo un tool di reconnaissance/OSINT per professionisti security.
+    Enfatizza: target di ricognizione, tipologia di dati raccolti, metodologia OSINT applicabile.
+    Evita: ovvietà generiche, termini marketing, "potente" o "avanzato" senza contesto.
+  `,
+  'Web': `
+    Stai descrivendo un tool per web application security testing.
+    Enfatizza: vulnerabilità rilevabili (XSS, SQLi, CSRF, etc.), protocolli supportati, tipo di scansione.
+    Evita: descrizioni da landing page, promesse vaghe.
+  `,
+  'Network': `
+    Stai descrivendo un tool di network security/analysis.
+    Enfatizza: layer di rete, protocolli analizzabili, capacità di detection/capture.
+  `,
+  'Exploit': `
+    Stai descrivendo un tool di exploitation/post-exploitation.
+    Enfatizza: tipologia di exploit, target systems, framework di riferimento (Metasploit, etc.).
+    Nota: descrizione tecnica neutrale, orientata a uso legittimo (pentest, CTF, research).
+  `,
+  'OSINT': `
+    Stai descrivendo un tool di Open Source Intelligence (OSINT).
+    Enfatizza: fonti di dati (social, DNS, metadata), tecniche di footprinting, automazione della ricerca.
+  `,
+  'default': `
+    Stai descrivendo un tool tecnico per professionisti IT/Security.
+    Sii preciso, tecnico, conciso. In italiano professionale.
+  `
+};
+
+/**
+ * Genera un prompt specializzato basato sulla categoria del tool.
+ */
+export function getSpecializedPrompt(category: string, name: string, url: string): string {
+  const baseCategory = Object.keys(CATEGORY_PROMPTS).find(k => 
+    category.toLowerCase().includes(k.toLowerCase())
+  ) || 'default';
+  
+  const instruction = CATEGORY_PROMPTS[baseCategory];
+  
+  return `
+${instruction}
+
+Tool: ${name}
+URL: ${url}
+
+Scrivi UNA descrizione in italiano di massimo 180 caratteri.
+Deve rispondere implicitamente a: "Cosa fa? Per chi? In quale scenario?"
+NON iniziare con il nome del tool. NON usare "questo tool".
+Solo la descrizione, nessun testo aggiuntivo.
+  `.trim();
+}
+
 // ============================================================================
 // QUALITY ENGINE
 // ============================================================================
@@ -49,28 +105,40 @@ export function evaluateCardQuality(card: Partial<ToolCardV2>): number {
 
   let score = 0.5; // Base score alzato
   
-  // 1. Lunghezza (40%)
+  // 1. Lunghezza (30%)
   // Range ideale BMAD: 80-300 chars
-  if (desc.length >= 100) score += 0.4;
-  else if (desc.length >= 80) score += 0.3;
-  else if (desc.length > 40) score += 0.15;
+  if (desc.length >= 150) score += 0.3;
+  else if (desc.length >= 80) score += 0.2;
+  else if (desc.length > 40) score += 0.1;
 
-  // 2. Densità Tecnica (10%)
+  // 2. Densità Tecnica (15%)
   const words = desc.split(/\s+/);
-  const techMatches = words.filter(w => TECHNICAL_KEYWORDS.has(w)).length;
-  score += Math.min(0.1, techMatches * 0.05);
+  const techMatches = words.filter(w => {
+    const cleanWord = w.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "");
+    return TECHNICAL_KEYWORDS.has(cleanWord);
+  }).length;
+  score += Math.min(0.15, techMatches * 0.05);
 
-  // 3. Penalità Bassa Qualità (-20%)
+  // 3. Penalità Bassa Qualità (-15%)
   const lowQualityMatches = words.filter(w => LOW_QUALITY_KEYWORDS.has(w)).length;
-  score -= Math.min(0.2, lowQualityMatches * 0.1);
+  score -= Math.min(0.15, lowQualityMatches * 0.05);
 
-  // 4. Presenza Campi V2 (20%)
-  if (card.shortDescription && card.shortDescription.length > 5) score += 0.1;
-  if (card.conceptFingerprint && card.conceptFingerprint.length > 0) score += 0.1;
+  // 4. Presenza Campi V2 (40%) - CRITICO PER PREMIUM MODE
+  let v2Score = 0;
+  if (card.shortDescription && card.shortDescription.length > 10) v2Score += 0.1;
+  if (card.conceptFingerprint && card.conceptFingerprint.length > 0) v2Score += 0.1;
+  if (card.categoryPath && card.categoryPath.includes('>')) v2Score += 0.1;
+  if (card.useCases && card.useCases.length > 0) v2Score += 0.1;
+  score += v2Score;
 
   // 5. Penalità Inizio Nome (-5%)
   if (card.name && desc.startsWith(card.name.toLowerCase())) {
     score -= 0.05;
+  }
+
+  // 6. Bonus Lingua Italiana (Tecnica)
+  if (desc.includes('strumento') || desc.includes('permette') || desc.includes('sicurezza')) {
+    score += 0.05;
   }
 
   return Math.max(0, Math.min(1, score));

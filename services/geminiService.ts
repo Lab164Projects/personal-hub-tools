@@ -8,9 +8,14 @@ import {
   buildSinglePrompt,
   parseBatchResponse,
   getModeLabel,
+  buildRefinementPrompt,
   type BatchPromptItem,
   type EnrichmentResult
 } from "./promptModeService";
+import { 
+  evaluateCardQuality, 
+  getSpecializedPrompt 
+} from "./descriptionQualityService";
 
 // Accesso alla chiave e modello configurati (pressione GEMINI_ in vite.config.ts)
 const RAW_API_KEY = import.meta.env.GEMINI_API_KEY || "";
@@ -123,13 +128,14 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
         
         // Estrazione testo ultra-robusta per @google/genai
         let text = "";
+        const anyResp = response as any;
         try {
-          if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
-            text = response.candidates[0].content.parts[0].text;
-          } else if (typeof response.text === 'function') {
-            text = await response.text();
-          } else if (response.text) {
-            text = response.text;
+          if (anyResp.candidates?.[0]?.content?.parts?.[0]?.text) {
+            text = anyResp.candidates[0].content.parts[0].text;
+          } else if (typeof anyResp['text'] === 'function') {
+            text = await anyResp['text']();
+          } else if (anyResp.text) {
+            text = anyResp.text;
           }
         } catch (e) {
           console.warn("[AI] Fallimento estrazione testo standard, provo fallback...");
@@ -363,15 +369,48 @@ export const enrichLinksBatch = async (
 
     // Parse and normalize using promptModeService
     try {
-      const parsed = parseBatchResponse(text, items, mode);
-      if (Object.keys(parsed).length === 0) {
+      const results = parseBatchResponse(text, items, mode);
+      
+      if (Object.keys(results).length === 0) {
         console.warn("[AI] No items were parsed from response. Text was:", text.substring(0, 500));
+        return {};
       }
-      return parsed;
+
+      // BMAD FASE 4: Quality Scoring & Refinement (Premium only)
+      const finalResults: Record<string, Partial<EnrichmentResult>> = {};
+
+      for (const item of items) {
+        let result = results[item.id];
+        
+        if (result && mode === 'premium') {
+          // Valutazione qualità
+          const quality = evaluateCardQuality({ ...item, ...result } as any);
+          
+          if (quality < 0.75) {
+            if (import.meta.env.DEV) console.log(`[AI] Quality low (${quality.toFixed(2)}) for ${item.name}. Refining...`);
+            
+            try {
+              const specializedPrompt = getSpecializedPrompt(result.category || "General", item.name, item.url);
+              const refinementResponse = await callWithModelRotation(specializedPrompt, { maxOutputTokens: 256 });
+              const refinedDesc = refinementResponse.text?.trim();
+              
+              if (refinedDesc && refinedDesc.length > 20) {
+                result.description = refinedDesc;
+                if (import.meta.env.DEV) console.log(`[AI] Refined description for ${item.name}`);
+              }
+            } catch (re) {
+              console.warn(`[AI] Refinement failed for ${item.name}`, re);
+            }
+          }
+        }
+        
+        if (result) finalResults[item.id] = result;
+      }
+
+      return finalResults;
+
     } catch (pe) {
       console.error("[AI] JSON Parse Error. First 200 chars:", text.substring(0, 200));
-      // Fallback: se il JSON è rotto ma contiene testo, proviamo a estrarre qualcosa? 
-      // Per ora falliamo ma con log migliore.
       throw new Error("Errore nel formato dei dati IA");
     }
 

@@ -58,11 +58,10 @@ export interface EnrichmentResult {
  * Caveman system instruction — risparmio ~60% token di sistema.
  * Output JSON minimale, niente ragionamento, solo dati strutturati.
  */
-const CAVEMAN_SYSTEM = `ROLE: url analyzer. TASK: extract data.
-OUTPUT: JSON only. NO explanation. NO preamble.
-LANG: italian for user-facing fields only.
-SCHEMA per item: {category,description,tags[],emoji,suggestedName,confidence}
-RULES: description<100chars italian. MUST NOT start with tool name. tags max5. emoji=single emoji. suggestedName=real project name if input name is generic (Github/Gitlab/etc). confidence=0-1.` as const;
+const CAVEMAN_SYSTEM = `ACT: url analyzer. TASK: extract. JSON ONLY. No text.
+LANG: italian (desc). 
+SCHEMA: {category,description,tags[],emoji,suggestedName,confidence}
+RULES: desc<100 chars, no name start. tags max5. suggestedName if GenericHost.` as const;
 
 /**
  * Premium system instruction — per Force Global Sync e re-enrichment qualitativo.
@@ -202,6 +201,35 @@ Genera un oggetto JSON con:
 - "confidence": stima 0-1 della qualità
 
 SOLO JSON valido, nessun testo extra.`;
+}
+
+/**
+ * Costruisce il prompt per il raffinamento della descrizione (Story 4.1).
+ */
+export function buildRefinementPrompt(
+  name: string,
+  url: string,
+  category: string,
+  instruction: string
+): string {
+  return `
+${instruction}
+
+TOOL INFO:
+Name: ${name}
+URL: ${url}
+Category: ${category}
+
+TASK: Write a professional, technical description in ITALIAN.
+RULES:
+- MAX 180 characters.
+- DO NOT start with tool name.
+- NO marketing fluff.
+- NO "questo tool" or "è uno strumento".
+- Answer: "What does it do? For whom? What scenario?"
+
+OUTPUT: Only the description string. No JSON, no preamble.
+`.trim();
 }
 
 /**
