@@ -111,19 +111,34 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
     for (const model of MODEL_LIST) {
       try {
         console.log(`[AI] Tentativo con Chiave #${keyIndex} - Modello: ${model}...`);
+        
+        // Puliamo la config per il modello specifico
+        const modelConfig = sanitizeConfigForModel(model, config);
+        
         const response = await ai.models.generateContent({
           model,
-          contents: contents,
-          config: sanitizeConfigForModel(model, config)
+          contents: [{ role: 'user', parts: [{ text: contents }] }],
+          config: modelConfig
         });
         
-        // Robust text extraction handling both property and method
-        const text = typeof response.text === 'function' ? await response.text() : response.text;
-        
+        // Estrazione testo ultra-robusta per @google/genai
+        let text = "";
+        try {
+          if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+            text = response.candidates[0].content.parts[0].text;
+          } else if (typeof response.text === 'function') {
+            text = await response.text();
+          } else if (response.text) {
+            text = response.text;
+          }
+        } catch (e) {
+          console.warn("[AI] Fallimento estrazione testo standard, provo fallback...");
+        }
+
         if (text) {
-          // Se ha funzionato, aggiorniamo l'indice globale per iniziare da questa chiave la prossima volta
           currentKeyIndex = keyIndex;
-          return { ...response, text }; // Ensure text is available as a string property
+          // Restituiamo un oggetto compatibile che include il testo estratto
+          return { ...response, text };
         }
       } catch (error: any) {
         const isRateLimit = error.message?.includes('429') || error.status === 429;
@@ -131,29 +146,37 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
         const isBadRequest = error.message?.includes('400') || error.status === 400;
 
         if (isRateLimit || isQuotaExceeded) {
-          console.warn(`[AI] Quota esaurita per Chiave #${keyIndex} / Modello ${model}.`);
+          console.warn(`[AI] Quota esaurita o Rate Limit per Chiave #${keyIndex} / Modello ${model}.`);
           lastError = error;
-          continue; // Passa al prossimo modello della stessa chiave, o alla prossima chiave
+          continue; 
         }
 
-        if (isBadRequest && model.includes('lite')) {
-          console.warn(`[AI] Modello ${model} ha rifiutato la config (400). Riprovo con config semplificata...`);
+        if (isBadRequest) {
+          console.warn(`[AI] Modello ${model} ha rifiutato la config (400). Riprovo senza schema...`);
           try {
             const simpleResponse = await ai.models.generateContent({
               model,
-              contents: contents,
-              config: {} // Riprova senza JSON schema o altro
+              contents: [{ role: 'user', parts: [{ text: contents }] }],
+              config: { maxOutputTokens: config.maxOutputTokens || 2048 }
             });
-            if (simpleResponse.text) {
+            
+            let simpleText = "";
+            if (simpleResponse.candidates?.[0]?.content?.parts?.[0]?.text) {
+              simpleText = simpleResponse.candidates[0].content.parts[0].text;
+            } else if (simpleResponse.text) {
+              simpleText = simpleResponse.text;
+            }
+
+            if (simpleText) {
               currentKeyIndex = keyIndex;
-              return simpleResponse;
+              return { ...simpleResponse, text: simpleText };
             }
           } catch (e2) {
-            console.error(`[AI] Fallimento anche con config semplificata su ${model}`);
+            console.error(`[AI] Fallimento totale su ${model}`);
           }
         }
 
-        console.error(`[AI] Errore su modello ${model}:`, error.message);
+        console.error(`[AI] Errore critico su modello ${model}:`, error.message);
         lastError = error;
         continue;
       }
@@ -206,7 +229,25 @@ export const enrichLinkData = async (
   try {
     const response = await callWithModelRotation(prompt, {
       responseMimeType: "application/json",
-      responseSchema: {
+      responseSchema: mode === 'premium' ? {
+        type: Type.OBJECT,
+        properties: {
+          category: { type: Type.STRING },
+          description: { type: Type.STRING },
+          shortDescription: { type: Type.STRING },
+          categoryPath: { type: Type.STRING },
+          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+          useCases: { type: Type.ARRAY, items: { type: Type.STRING } },
+          targetAudience: { type: Type.STRING },
+          toolLanguage: { type: Type.STRING },
+          toolStatus: { type: Type.STRING },
+          conceptFingerprint: { type: Type.ARRAY, items: { type: Type.STRING } },
+          emoji: { type: Type.STRING },
+          suggestedName: { type: Type.STRING },
+          confidence: { type: Type.NUMBER },
+        },
+        required: ["category", "description", "tags"]
+      } : {
         type: Type.OBJECT,
         properties: {
           category: { type: Type.STRING },
@@ -216,19 +257,28 @@ export const enrichLinkData = async (
           suggestedName: { type: Type.STRING },
           confidence: { type: Type.NUMBER },
         },
-        required: ["category", "description", "tags"],
+        required: ["category", "description", "tags"]
       },
       maxOutputTokens: config.maxOutputTokens,
     });
-
     const text = response.text;
-    if (!text) throw new Error("Nessuna risposta dall'IA");
-    const result: Partial<EnrichmentResult> = JSON.parse(text);
+    if (!text) throw new Error("Risposta IA vuota");
 
-    // 3. Save to Cache
-    setCachedData(cacheKey, result);
-    return result;
-
+    // Pulizia e Parsing
+    const cleanedText = text.replace(/```json\n?|\n?```/g, "").trim();
+    try {
+      const parsedData = JSON.parse(cleanedText);
+      
+      // Se è premium e mancano campi, logghiamo ma restituiamo quello che abbiamo
+      if (mode === 'premium' && !parsedData.shortDescription && import.meta.env.DEV) {
+        console.warn("[AI] Premium response missing shortDescription field", parsedData);
+      }
+      
+      return parsedData;
+    } catch (pe) {
+      console.error("Errore parsing JSON singolo:", cleanedText);
+      throw new Error("Formato risposta IA non valido");
+    }
   } catch (error: unknown) {
     console.error("Errore Gemini:", error);
     throw error;
@@ -300,20 +350,28 @@ export const enrichLinksBatch = async (
       maxOutputTokens: config.maxOutputTokens,
     });
 
-    const text = response.text;
+    const text = response.text || "";
+    
     if (import.meta.env.DEV) {
-      console.log("Raw Batch AI Response:", text);
+      console.log(`[AI] Response length: ${text.length} chars. Mode: ${mode}`);
     }
-    if (!text) {
-      console.warn("AI returned empty text. This might be a quota block or safety filter.");
-      throw new Error("Risposta Batch Vuota");
+
+    if (!text || text.length < 5) {
+      console.error("[AI] Empty or too short response:", text);
+      throw new Error("Risposta IA vuota o malformata");
     }
 
     // Parse and normalize using promptModeService
     try {
-      return parseBatchResponse(text, items, mode);
+      const parsed = parseBatchResponse(text, items, mode);
+      if (Object.keys(parsed).length === 0) {
+        console.warn("[AI] No items were parsed from response. Text was:", text.substring(0, 500));
+      }
+      return parsed;
     } catch (pe) {
-      console.error("JSON Parse Error on AI response:", text);
+      console.error("[AI] JSON Parse Error. First 200 chars:", text.substring(0, 200));
+      // Fallback: se il JSON è rotto ma contiene testo, proviamo a estrarre qualcosa? 
+      // Per ora falliamo ma con log migliore.
       throw new Error("Errore nel formato dei dati IA");
     }
 

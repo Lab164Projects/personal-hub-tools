@@ -533,13 +533,19 @@ export default function App() {
         setActiveAiMode('premium'); // Force sync uses premium mode
         
         // Reset worker state to start immediately
-        setQueueDelay(2000);
-        setIsQueueProcessing(false);
+        setQueueDelay(1000); // Reduce delay for faster start
+        setIsQueueProcessing(false); 
         setRateLimitState(resetRateLimit());
         
         const linkIds = links.map(l => l.id);
         await batchUpdateLinkStatus(effectiveUid, linkIds, 'queued');
         
+        // Sblocca esplicitamente il worker forzando un cambiamento di stato se necessario
+        setTimeout(() => {
+          setIsQueueProcessing(false);
+          console.log("[AI] Force Bulk Sync initiated and worker unlocked.");
+        }, 100);
+
         alert("🧠 Premium Sync avviata! I tool verranno analizzati con prompt espansi.");
       } catch (e) {
         console.error("Force Bulk Error:", e);

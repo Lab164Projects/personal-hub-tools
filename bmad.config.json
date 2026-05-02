@@ -1,0 +1,15 @@
+{
+  "name": "Personal Tools Hub",
+  "version": "1.0.0",
+  "framework": "BMAD-METHOD",
+  "modules": ["bmm", "bmb"],
+  "paths": {
+    "prompts": "./",
+    "docs": "./docs",
+    "output": "./"
+  },
+  "settings": {
+    "partyMode": true,
+    "caveman": true
+  }
+}

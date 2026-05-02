@@ -30,7 +30,7 @@ const TECHNICAL_KEYWORDS = new Set([
 /** Keyword che indicano bassa qualità o placeholder */
 const LOW_QUALITY_KEYWORDS = new Set([
   'clicca', 'qui', 'visita', 'sito', 'web', 'nessuna', 'descrizione',
-  'disponibile', 'potente', 'fantastico', 'migliore', 'tool', 'strumento'
+  'disponibile', 'potente', 'fantastico', 'migliore'
 ]);
 
 // ============================================================================
@@ -47,12 +47,13 @@ export function evaluateCardQuality(card: Partial<ToolCardV2>): number {
   const desc = (card.description || '').toLowerCase();
   if (desc.length < 10) return 0.1;
 
-  let score = 0.45; // Base score per aver fornito qualcosa
+  let score = 0.5; // Base score alzato
   
   // 1. Lunghezza (40%)
-  // Range ideale BMAD: 100-300 chars per descrizioni professionali
+  // Range ideale BMAD: 80-300 chars
   if (desc.length >= 100) score += 0.4;
-  else if (desc.length > 50) score += 0.2;
+  else if (desc.length >= 80) score += 0.3;
+  else if (desc.length > 40) score += 0.15;
 
   // 2. Densità Tecnica (10%)
   const words = desc.split(/\s+/);
@@ -63,12 +64,11 @@ export function evaluateCardQuality(card: Partial<ToolCardV2>): number {
   const lowQualityMatches = words.filter(w => LOW_QUALITY_KEYWORDS.has(w)).length;
   score -= Math.min(0.2, lowQualityMatches * 0.1);
 
-  // 4. Presenza Campi V2 (10%)
-  if (card.shortDescription && card.shortDescription.length > 5) score += 0.05;
-  if (card.conceptFingerprint && card.conceptFingerprint.length > 0) score += 0.05;
+  // 4. Presenza Campi V2 (20%)
+  if (card.shortDescription && card.shortDescription.length > 5) score += 0.1;
+  if (card.conceptFingerprint && card.conceptFingerprint.length > 0) score += 0.1;
 
   // 5. Penalità Inizio Nome (-5%)
-  // BMAD vieta di iniziare la descrizione col nome del tool
   if (card.name && desc.startsWith(card.name.toLowerCase())) {
     score -= 0.05;
   }
