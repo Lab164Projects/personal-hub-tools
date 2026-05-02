@@ -29,7 +29,7 @@ const API_KEYS = RAW_API_KEY.split(',')
 // Supporto per rotazione MODELLI se specificati come lista separata da virgola
 const MODEL_LIST = RAW_MODEL_NAME.split(',')
   .map(m => m.replace(/['"]+/g, '').trim())
-  .filter(m => m.length > 0);
+  .filter(m => m.length > 0 && !m.includes('tts') && !m.includes('3-flash'));
 
 // Stato interno per la rotazione
 let currentKeyIndex = 0;
