@@ -42,31 +42,33 @@ if (API_KEYS.length > 0) {
 
 /**
  * Token limits per model (TPM - Tokens Per Minute)
- * Estimated tokens per item: ~400 (input + output combined)
- * We use 70% of the limit for safety margin
+ * Real free-tier limits from Google Cloud Console (2025):
+ *   gemini-2.5-flash:      5 req/min, 20 req/day, 250k TPM
+ *   gemini-2.5-flash-lite: 10 req/min, 20 req/day, 250k TPM
  */
 const MODEL_TOKEN_LIMITS: Record<string, number> = {
-  'gemini-3-flash': 250000,
   'gemini-2.5-flash-lite': 250000,
   'gemini-2.5-flash': 250000,
-  'gemini-2.5-flash-tts': 10000,
   'gemini-1.5-flash': 250000,
   'default': 100000
 };
 
-const TOKENS_PER_ITEM = 400; // Conservative estimate
-const SAFETY_MARGIN = 0.7;   // Use only 70% of limit
-const MAX_PRACTICAL_BATCH = 50; // Cap for practical processing
+const TOKENS_PER_ITEM = 600;  // Premium prompt is larger — conservative estimate
+const SAFETY_MARGIN = 0.6;    // 60% of TPM to stay well within limits
+// With 20 req/day, keep batches small so the daily budget covers full library:
+// 20 req × 8 items = 160 tools per day — reasonable for free tier
+const MAX_PRACTICAL_BATCH = 8;
 
 /**
- * Calculate max batch size based on the first model in the rotation list
+ * Calculate max batch size based on the primary model's token limits.
+ * Respects both TPM and the practical daily request budget.
  */
 export function getMaxBatchSize(): number {
   const primaryModel = MODEL_LIST[0] || 'default';
   const tokenLimit = MODEL_TOKEN_LIMITS[primaryModel] || MODEL_TOKEN_LIMITS['default'];
   const theoreticalMax = Math.floor((tokenLimit * SAFETY_MARGIN) / TOKENS_PER_ITEM);
   const finalBatchSize = Math.min(theoreticalMax, MAX_PRACTICAL_BATCH);
-  console.log(`Batch Size Calculated: ${finalBatchSize} items (Model: ${primaryModel}, Limit: ${tokenLimit} TPM)`);
+  console.log(`[AI] Batch Size: ${finalBatchSize} items (Model: ${primaryModel}, TPM: ${tokenLimit})`);
   return finalBatchSize;
 }
 

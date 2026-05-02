@@ -4,13 +4,21 @@
  */
 
 const STORAGE_KEY = 'gemini_rate_limit_state';
-const MAX_REQUESTS_PER_MINUTE = 14;
-const COOLDOWN_DURATION_MS = 65 * 1000; // 65 seconds (ensure a full minute window reset)
-const CHECK_INTERVAL_MS = 30 * 1000; // 30 seconds
+
+// --- REAL FREE TIER LIMITS (from Google Cloud Console) ---
+// gemini-2.5-flash:      5 req/min,  20 req/day
+// gemini-2.5-flash-lite: 10 req/min, 20 req/day
+// We use the LOWEST common denominator for safety across model rotation.
+const MAX_REQUESTS_PER_MINUTE = 4;          // safe for gemini-2.5-flash (limit: 5)
+const MAX_REQUESTS_PER_DAY = 18;            // safe margin below 20/day limit
+const COOLDOWN_DURATION_MS = 65 * 1000;    // 65s — ensures full minute window reset
+const CHECK_INTERVAL_MS = 30 * 1000;
 
 export interface RateLimitState {
     requestsThisMinute: number;
     lastMinuteReset: number;
+    requestsToday: number;          // NEW: track daily usage
+    lastDayReset: number;           // NEW: timestamp of last daily reset
     isInCooldown: boolean;
     cooldownUntil: number;
     consecutiveErrors: number;
@@ -20,6 +28,8 @@ export interface RateLimitState {
 const getDefaultState = (): RateLimitState => ({
     requestsThisMinute: 0,
     lastMinuteReset: Date.now(),
+    requestsToday: 0,
+    lastDayReset: Date.now(),
     isInCooldown: false,
     cooldownUntil: 0,
     consecutiveErrors: 0,
@@ -35,6 +45,11 @@ export const loadRateLimitState = (): RateLimitState => {
             if (Date.now() - state.lastMinuteReset > 60000) {
                 state.requestsThisMinute = 0;
                 state.lastMinuteReset = Date.now();
+            }
+            // Reset daily counter if a day has passed
+            if (!state.lastDayReset || Date.now() - state.lastDayReset > 86400000) {
+                state.requestsToday = 0;
+                state.lastDayReset = Date.now();
             }
             // Check if cooldown has expired
             if (state.isInCooldown && Date.now() > state.cooldownUntil) {
@@ -60,33 +75,38 @@ export const saveRateLimitState = (state: RateLimitState): void => {
 export const canMakeRequest = (state: RateLimitState): boolean => {
     // Check cooldown
     if (state.isInCooldown) {
-        if (Date.now() < state.cooldownUntil) {
-            return false;
-        }
-        // Cooldown expired
+        if (Date.now() < state.cooldownUntil) return false;
         state.isInCooldown = false;
         state.consecutiveErrors = 0;
     }
-
     // Reset minute counter if needed
     if (Date.now() - state.lastMinuteReset > 60000) {
         state.requestsThisMinute = 0;
         state.lastMinuteReset = Date.now();
     }
-
-    return state.requestsThisMinute < MAX_REQUESTS_PER_MINUTE;
+    // Reset daily counter if needed
+    if (!state.lastDayReset || Date.now() - state.lastDayReset > 86400000) {
+        state.requestsToday = 0;
+        state.lastDayReset = Date.now();
+    }
+    // Check both per-minute and per-day limits
+    if (state.requestsThisMinute >= MAX_REQUESTS_PER_MINUTE) return false;
+    if ((state.requestsToday || 0) >= MAX_REQUESTS_PER_DAY) {
+        console.warn(`[RateLimit] Daily quota reached (${state.requestsToday}/${MAX_REQUESTS_PER_DAY}). Waiting until tomorrow.`);
+        return false;
+    }
+    return true;
 };
 
 export const recordRequest = (state: RateLimitState): RateLimitState => {
     const newState = { ...state };
-
-    // Reset minute counter if needed
     if (Date.now() - newState.lastMinuteReset > 60000) {
         newState.requestsThisMinute = 0;
         newState.lastMinuteReset = Date.now();
     }
-
     newState.requestsThisMinute++;
+    newState.requestsToday = (newState.requestsToday || 0) + 1;
+    console.log(`[RateLimit] Req #${newState.requestsThisMinute}/min | ${newState.requestsToday}/day`);
     saveRateLimitState(newState);
     return newState;
 };
