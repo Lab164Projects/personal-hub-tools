@@ -135,3 +135,9 @@ export const updateLastCheckTime = (state: RateLimitState): RateLimitState => {
     saveRateLimitState(newState);
     return newState;
 };
+
+export const resetRateLimit = (): RateLimitState => {
+    const newState = getDefaultState();
+    saveRateLimitState(newState);
+    return newState;
+};

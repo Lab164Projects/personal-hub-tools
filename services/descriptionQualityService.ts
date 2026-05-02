@@ -47,17 +47,17 @@ export function evaluateCardQuality(card: Partial<ToolCardV2>): number {
   const desc = (card.description || '').toLowerCase();
   if (desc.length < 10) return 0.1;
 
-  let score = 0.4; // Base score per aver fornito qualcosa
+  let score = 0.45; // Base score per aver fornito qualcosa
+  
+  // 1. Lunghezza (40%)
+  // Range ideale BMAD: 100-300 chars per descrizioni professionali
+  if (desc.length >= 100) score += 0.4;
+  else if (desc.length > 50) score += 0.2;
 
-  // 1. Lunghezza (30%)
-  // Range ideale 80-150 chars
-  if (desc.length >= 80 && desc.length <= 150) score += 0.3;
-  else if (desc.length > 30) score += 0.15;
-
-  // 2. Densità Tecnica (20%)
+  // 2. Densità Tecnica (10%)
   const words = desc.split(/\s+/);
   const techMatches = words.filter(w => TECHNICAL_KEYWORDS.has(w)).length;
-  score += Math.min(0.2, techMatches * 0.05);
+  score += Math.min(0.1, techMatches * 0.05);
 
   // 3. Penalità Bassa Qualità (-20%)
   const lowQualityMatches = words.filter(w => LOW_QUALITY_KEYWORDS.has(w)).length;

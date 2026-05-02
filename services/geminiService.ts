@@ -117,10 +117,13 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
           config: sanitizeConfigForModel(model, config)
         });
         
-        if (response.text) {
+        // Robust text extraction handling both property and method
+        const text = typeof response.text === 'function' ? await response.text() : response.text;
+        
+        if (text) {
           // Se ha funzionato, aggiorniamo l'indice globale per iniziare da questa chiave la prossima volta
           currentKeyIndex = keyIndex;
-          return response;
+          return { ...response, text }; // Ensure text is available as a string property
         }
       } catch (error: any) {
         const isRateLimit = error.message?.includes('429') || error.status === 429;
@@ -260,6 +263,40 @@ export const enrichLinksBatch = async (
   try {
     const response = await callWithModelRotation(prompt, {
       responseMimeType: "application/json",
+      responseSchema: mode === 'premium' ? {
+        type: Type.OBJECT,
+        additionalProperties: {
+          type: Type.OBJECT,
+          properties: {
+            category: { type: Type.STRING },
+            description: { type: Type.STRING },
+            shortDescription: { type: Type.STRING },
+            categoryPath: { type: Type.STRING },
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            enrichedTags: { 
+              type: Type.ARRAY, 
+              items: { 
+                type: Type.OBJECT,
+                properties: {
+                  value: { type: Type.STRING },
+                  type: { type: Type.STRING },
+                  weight: { type: Type.NUMBER }
+                },
+                required: ["value", "type", "weight"]
+              } 
+            },
+            useCases: { type: Type.ARRAY, items: { type: Type.STRING } },
+            targetAudience: { type: Type.STRING },
+            toolLanguage: { type: Type.STRING },
+            toolStatus: { type: Type.STRING },
+            conceptFingerprint: { type: Type.ARRAY, items: { type: Type.STRING } },
+            emoji: { type: Type.STRING },
+            suggestedName: { type: Type.STRING },
+            confidence: { type: Type.NUMBER },
+          },
+          required: ["category", "description", "tags"]
+        }
+      } : undefined,
       maxOutputTokens: config.maxOutputTokens,
     });
 

@@ -94,7 +94,14 @@ export const batchUpdateLinkStatus = async (userId: string, linkIds: string[], s
             
             chunk.forEach(id => {
                 const linkRef = doc(db, "users", userId, "links", id);
-                batch.update(linkRef, { aiProcessingStatus: status });
+                const updateData: any = { aiProcessingStatus: status };
+                
+                // Se stiamo mettendo in coda, resettiamo l'errore per forzare il worker a riprovare subito
+                if (status === 'queued' || status === 'pending') {
+                    updateData.lastErrorAt = 0;
+                }
+                
+                batch.update(linkRef, updateData);
             });
             
             await batch.commit();

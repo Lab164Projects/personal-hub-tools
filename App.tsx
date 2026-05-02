@@ -31,6 +31,7 @@ import {
   recordSuccess,
   getCooldownRemainingMs,
   formatCooldownTime,
+  resetRateLimit,
 } from './services/rateLimitService';
 import { isUserAuthorized, getSharedDatabaseOwner, getAuthDebugInfo } from './services/authorizationService';
 import { PromptMode } from './services/promptModeService';
@@ -482,15 +483,33 @@ export default function App() {
           ? result.suggestedName
           : link.name;
 
-        await updateLink(effectiveUid, {
+        const updated: any = {
           ...link,
           name: newName,
           description: result.description || link.description,
           category: (result.category && result.category !== "Non categorizzato") ? result.category : link.category,
           tags: (result.tags && result.tags.length > 0) ? result.tags : link.tags,
           emoji: result.emoji || link.emoji,
-          aiProcessingStatus: 'done'
-        });
+          aiProcessingStatus: 'done' as const
+        };
+
+        // Add V2 fields
+        if (result.shortDescription) updated.shortDescription = result.shortDescription;
+        if (result.categoryPath) updated.categoryPath = result.categoryPath;
+        if (result.useCases) updated.useCases = result.useCases;
+        if (result.targetAudience) updated.targetAudience = result.targetAudience;
+        if (result.toolLanguage) updated.toolLanguage = result.toolLanguage;
+        if (result.toolStatus) updated.toolStatus = result.toolStatus;
+        if (result.conceptFingerprint) updated.conceptFingerprint = result.conceptFingerprint;
+        if (result.enrichedTags) updated.enrichedTags = result.enrichedTags;
+
+        // Score
+        const realQuality = evaluateCardQuality(updated as Partial<ToolCardV2>);
+        updated.enrichmentConfidence = realQuality;
+        updated.enrichmentPromptVersion = ENRICHMENT_PROMPT_VERSION;
+        updated.lastEnrichedAt = Date.now();
+
+        await updateLink(effectiveUid, updated as LinkItem);
         setRateLimitState(prev => recordSuccess(prev));
       } else {
         throw new Error("Nessun risultato");
@@ -512,8 +531,15 @@ export default function App() {
       try {
         setLoadingLinks(true);
         setActiveAiMode('premium'); // Force sync uses premium mode
+        
+        // Reset worker state to start immediately
+        setQueueDelay(2000);
+        setIsQueueProcessing(false);
+        setRateLimitState(resetRateLimit());
+        
         const linkIds = links.map(l => l.id);
         await batchUpdateLinkStatus(effectiveUid, linkIds, 'queued');
+        
         alert("🧠 Premium Sync avviata! I tool verranno analizzati con prompt espansi.");
       } catch (e) {
         console.error("Force Bulk Error:", e);
