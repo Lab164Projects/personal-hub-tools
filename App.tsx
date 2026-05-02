@@ -132,7 +132,7 @@ export default function App() {
   const [editingLink, setEditingLink] = useState<LinkItem | null>(null);
 
   // AI Queue
-  const [queueDelay, setQueueDelay] = useState(20000); // 20s = 3 requests per minute
+  const [queueDelay, setQueueDelay] = useState(2000); // 2s initial delay
   const [isQueueProcessing, setIsQueueProcessing] = useState(false);
   const [isAutoAiEnabled, setIsAutoAiEnabled] = useState(() => {
     return localStorage.getItem('auto_ai_enabled') !== 'false'; // Default true
@@ -267,7 +267,14 @@ export default function App() {
 
   // --- AUTOMATIC AI QUEUE PROCESSOR WITH RATE LIMITING ---
   useEffect(() => {
-    if (!user || isQueueProcessing || !isAutoAiEnabled) return;
+    if (!user || isQueueProcessing) return;
+    
+    const shouldProcess = isAutoAiEnabled || activeAiMode === 'premium';
+    if (!shouldProcess) {
+      // Log occasionally to avoid spam
+      if (Math.random() < 0.1) console.log("[AI Worker] Idle - Auto AI OFF and not in Premium mode.");
+      return;
+    }
 
     // STOP IMMEDIATELY if in cooldown. Do not write to Firestore.
     // The UI handles the visual indication of "Queued" or "Cooldown".
@@ -277,7 +284,7 @@ export default function App() {
 
     // Double check rate limit state before firing
     if (!canMakeRequest(rateLimitState)) {
-      console.log('Rate limit reached (check), waiting...');
+      console.log(`[AI Worker] Rate limit reached (${rateLimitState.requestsThisMinute} req/min), waiting...`);
       return;
     }
 
@@ -410,7 +417,7 @@ export default function App() {
         }
 
         setRateLimitState(prev => recordSuccess(prev));
-        if (queueDelay > 4000) setQueueDelay(4000);
+        if (queueDelay > 2000) setQueueDelay(2000);
 
       } catch (error: unknown) {
         console.error("Batch Enrichment Failed:", error);

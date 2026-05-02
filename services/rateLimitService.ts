@@ -4,9 +4,9 @@
  */
 
 const STORAGE_KEY = 'gemini_rate_limit_state';
-const MAX_REQUESTS_PER_MINUTE = 3;
-const COOLDOWN_DURATION_MS = 1 * 60 * 1000; // 1 minute (reduced from 5)
-const CHECK_INTERVAL_MS = 1 * 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_MINUTE = 30;
+const COOLDOWN_DURATION_MS = 15 * 1000; // 15 seconds
+const CHECK_INTERVAL_MS = 15 * 1000; // 15 seconds
 
 export interface RateLimitState {
     requestsThisMinute: number;

@@ -62,7 +62,7 @@ const CAVEMAN_SYSTEM = `ROLE: url analyzer. TASK: extract data.
 OUTPUT: JSON only. NO explanation. NO preamble.
 LANG: italian for user-facing fields only.
 SCHEMA per item: {category,description,tags[],emoji,suggestedName,confidence}
-RULES: description<80chars italian. MUST NOT start with tool name. tags max5. emoji=single emoji. suggestedName=real project name if input name is generic (Github/Gitlab/etc). confidence=0-1.` as const;
+RULES: description<100chars italian. MUST NOT start with tool name. tags max5. emoji=single emoji. suggestedName=real project name if input name is generic (Github/Gitlab/etc). confidence=0-1.` as const;
 
 /**
  * Premium system instruction — per Force Global Sync e re-enrichment qualitativo.
@@ -146,8 +146,8 @@ ${itemsText}
 
 PER OGNI ITEM GENERA UN OGGETTO JSON CON TUTTI QUESTI CAMPI:
 1. "category": categoria specifica IN ITALIANO (Sicurezza Web, Analisi Rete, OSINT, Sviluppo, Analisi Vulnerabilità, Threat Intelligence, Crittografia, Forensics, DevSecOps, Utility)
-2. "description": descrizione professionale in italiano, 2-3 frasi, max 120 caratteri. Tecnica ma chiara. NON iniziare col nome del tool.
-3. "shortDescription": versione ultra-breve della descrizione (max 60 chars), azione principale del tool
+2. "description": descrizione professionale in italiano, ricca di dettagli tecnici, lunghezza consigliata 150-200 caratteri. NON iniziare col nome del tool.
+3. "shortDescription": versione ultra-breve della descrizione (max 80 chars), azione principale del tool
 4. "categoryPath": percorso gerarchico (es: "Security > Web > Scanner", "OSINT > Social Media")
 5. "tags": 3-5 tag tecnici pertinenti (stringhe semplici)
 6. "enrichedTags": array di oggetti {"value":"tag","type":"technique|domain|target|language|protocol|platform","weight":0.0-1.0}
@@ -187,8 +187,8 @@ Tool: Nome="${name}", URL="${url}"
 
 Genera un oggetto JSON con:
 - "category": categoria specifica in italiano
-- "description": descrizione professionale in italiano (max 120 chars), NON iniziare col nome del tool
-- "shortDescription": versione ultra-breve (max 60 chars)
+- "description": descrizione professionale e tecnica in italiano (150-200 chars), NON iniziare col nome del tool
+- "shortDescription": versione ultra-breve (max 80 chars)
 - "categoryPath": percorso gerarchico (es: "Security > Web > Scanner")
 - "tags": 3-5 tag tecnici
 - "enrichedTags": array di oggetti {"value":"tag","type":"technique|domain|target|language|protocol|platform","weight":0.0-1.0}

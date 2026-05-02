@@ -85,12 +85,21 @@ export const deleteAllLinks = async (userId: string): Promise<void> => {
 
 export const batchUpdateLinkStatus = async (userId: string, linkIds: string[], status: 'queued' | 'pending' | 'processing' | 'done') => {
     try {
-        const batch = writeBatch(db);
-        linkIds.forEach(id => {
-            const linkRef = doc(db, "users", userId, "links", id);
-            batch.update(linkRef, { aiProcessingStatus: status });
-        });
-        await batch.commit();
+        // Firestore has a limit of 500 operations per batch
+        const BATCH_LIMIT = 500;
+        
+        for (let i = 0; i < linkIds.length; i += BATCH_LIMIT) {
+            const chunk = linkIds.slice(i, i + BATCH_LIMIT);
+            const batch = writeBatch(db);
+            
+            chunk.forEach(id => {
+                const linkRef = doc(db, "users", userId, "links", id);
+                batch.update(linkRef, { aiProcessingStatus: status });
+            });
+            
+            await batch.commit();
+            console.log(`[Firestore] Status update batch committed: ${chunk.length} items`);
+        }
     } catch (error) {
         console.error("Error in batch status update:", error);
         throw error;
