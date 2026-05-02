@@ -219,7 +219,16 @@ export function parseBatchResponse(
   originalItems: ReadonlyArray<BatchPromptItem>,
   _mode: PromptMode
 ): Record<string, Partial<EnrichmentResult>> {
-  const rawResult: Record<string, Partial<EnrichmentResult>> = JSON.parse(rawText);
+  // Robust JSON extraction (removes markdown backticks and extra text)
+  let cleanText = rawText.trim();
+  if (cleanText.includes('```')) {
+    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match && match[1]) {
+      cleanText = match[1].trim();
+    }
+  }
+
+  const rawResult: Record<string, Partial<EnrichmentResult>> = JSON.parse(cleanText);
   const normalizedResult: Record<string, Partial<EnrichmentResult>> = {};
 
   for (const key in rawResult) {
