@@ -314,8 +314,11 @@ export default function App() {
       if (batchItems.length === 0) return;
 
       setIsQueueProcessing(true);
-      setActiveAiMode('caveman'); // Auto-enrichment uses fast mode
-
+      // Respect the active mode (e.g. if set to 'premium' by force sync)
+      const currentMode = activeAiMode; 
+      
+      console.log(`[AI Worker] Processing ${batchItems.length} items in ${currentMode} mode...`);
+      
       // Mark batch as processing
       for (const item of batchItems) {
         await updateLink(effectiveUid!, { ...item, aiProcessingStatus: 'processing' });
@@ -331,7 +334,7 @@ export default function App() {
           currentDescription: item.description
         }));
 
-        const results = await enrichLinksBatch(itemsPayload, 'caveman');
+        const results = await enrichLinksBatch(itemsPayload, currentMode);
 
         // Process results
         for (const item of batchItems) {
@@ -435,7 +438,18 @@ export default function App() {
     }, queueDelay);
 
     return () => clearTimeout(timer);
-  }, [links, user, isQueueProcessing, queueDelay, rateLimitState]);
+  }, [links, user, isQueueProcessing, queueDelay, rateLimitState, activeAiMode]);
+
+  // BMAD: Logic to reset premium mode to caveman when no more queued items
+  useEffect(() => {
+    if (activeAiMode === 'premium' && !isQueueProcessing) {
+      const hasQueued = links.some(l => l.aiProcessingStatus === 'queued' || l.aiProcessingStatus === 'pending');
+      if (!hasQueued) {
+        console.log("[AI Worker] All items processed. Resetting to Caveman mode.");
+        setActiveAiMode('caveman');
+      }
+    }
+  }, [links, activeAiMode, isQueueProcessing]);
 
   const handleManualAiAnalysis = async (link: LinkItem) => {
     if (!user || !effectiveUid || isQueueProcessing || rateLimitState.isInCooldown) return;

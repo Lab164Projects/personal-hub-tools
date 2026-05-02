@@ -62,7 +62,7 @@ const CAVEMAN_SYSTEM = `ROLE: url analyzer. TASK: extract data.
 OUTPUT: JSON only. NO explanation. NO preamble.
 LANG: italian for user-facing fields only.
 SCHEMA per item: {category,description,tags[],emoji,suggestedName,confidence}
-RULES: description<80chars italian. tags max5. emoji=single emoji. suggestedName=real project name if input name is generic (Github/Gitlab/etc). confidence=0-1.` as const;
+RULES: description<80chars italian. MUST NOT start with tool name. tags max5. emoji=single emoji. suggestedName=real project name if input name is generic (Github/Gitlab/etc). confidence=0-1.` as const;
 
 /**
  * Premium system instruction — per Force Global Sync e re-enrichment qualitativo.
@@ -221,10 +221,21 @@ export function parseBatchResponse(
 ): Record<string, Partial<EnrichmentResult>> {
   // Robust JSON extraction (removes markdown backticks and extra text)
   let cleanText = rawText.trim();
+  
+  // 1. Try to extract content inside markdown blocks
   if (cleanText.includes('```')) {
     const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match && match[1]) {
       cleanText = match[1].trim();
+    }
+  }
+
+  // 2. If still no valid JSON start/end, try to find the first '{' and last '}'
+  if (!cleanText.startsWith('{') || !cleanText.endsWith('}')) {
+    const firstBrace = cleanText.indexOf('{');
+    const lastBrace = cleanText.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleanText = cleanText.substring(firstBrace, lastBrace + 1);
     }
   }
 
