@@ -124,6 +124,8 @@ export default function App() {
   const [searchIntent, setSearchIntent] = useState<SearchIntent | null>(null);
   
   const lastManualPremiumTrigger = useRef<number>(0);
+  // Bug #3 Fix: ref-based lock prevents concurrent execution across re-renders
+  const isProcessingRef = useRef<boolean>(false);
   const [aiSearchStatus, setAiSearchStatus] = useState<AiStatus>(AiStatus.IDLE);
 
   const [newUrl, setNewUrl] = useState('');
@@ -142,6 +144,7 @@ export default function App() {
 
   const [rateLimitState, setRateLimitState] = useState<RateLimitState>(() => loadRateLimitState());
   const [cooldownDisplay, setCooldownDisplay] = useState('');
+  const [aiLastError, setAiLastError] = useState<{ msg: string; ts: number } | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -256,23 +259,33 @@ export default function App() {
       const maxBatch = getMaxBatchSize();
       const batchItems = links
         .filter(l => {
+          // Always process explicitly queued or pending items
           if (l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued') return true;
+
+          // Retry errors after 5 minutes
           if (l.aiProcessingStatus === 'error') {
             const fiveMins = 5 * 60 * 1000;
             const timeSinceError = Date.now() - (l.lastErrorAt || 0);
             return !l.description || l.description.includes('analisi') || timeSinceError > fiveMins;
           }
-          if (l.aiProcessingStatus === 'done' || !l.aiProcessingStatus) {
-            const threshold = activeAiMode === 'premium' ? 0.85 : 0.6;
-            const quality = l.enrichmentConfidence ?? evaluateCardQuality(l as Partial<ToolCardV2>);
-            return quality < threshold;
+
+          // Bug #1 Fix: In premium mode, do NOT re-queue 'done' items based on quality.
+          // Premium mode only works on explicitly queued items to prevent infinite loops.
+          // In caveman mode, allow mild quality maintenance (threshold 0.5 only).
+          if ((l.aiProcessingStatus === 'done' || !l.aiProcessingStatus) && activeAiMode === 'caveman') {
+            const quality = l.enrichmentConfidence ?? 0;
+            return quality < 0.5; // Only re-process very low quality in routine mode
           }
+
           return false;
         })
         .slice(0, maxBatch);
 
       if (batchItems.length === 0) return;
 
+      // Bug #3 Fix: double-check ref lock before starting (state may be stale in closure)
+      if (isProcessingRef.current) return;
+      isProcessingRef.current = true;
       setIsQueueProcessing(true);
       const currentMode = activeAiMode; 
       
@@ -357,12 +370,20 @@ export default function App() {
         if (queueDelay > 2000) setQueueDelay(2000);
 
       } catch (error: unknown) {
-        console.error("Batch Enrichment Failed:", error);
+        const err = error as { message?: string; status?: number };
+        const errMsg = err?.message || 'Unknown error';
+        const isRateLimit = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
 
-        const err = error as { message?: string };
-        const isRateLimit = err?.message?.includes('429') ||
-          err?.message?.toLowerCase().includes('rate');
+        console.error("[AI Worker] Batch Enrichment Failed:", {
+          message: errMsg,
+          isRateLimit,
+          status: err?.status,
+          mode: currentMode,
+          batchSize: batchItems.length,
+          timestamp: new Date().toISOString()
+        });
 
+        setAiLastError({ msg: errMsg, ts: Date.now() });
         setRateLimitState(prev => recordError(prev, isRateLimit));
 
         // Revert status
@@ -377,12 +398,13 @@ export default function App() {
         if (!isRateLimit) setQueueDelay(prev => Math.min(prev * 2, 60000));
 
       } finally {
+        isProcessingRef.current = false;
         setIsQueueProcessing(false);
       }
     }, queueDelay);
 
     return () => clearTimeout(timer);
-  }, [links, user, isQueueProcessing, queueDelay, rateLimitState, activeAiMode]);
+  }, [links, user, isQueueProcessing, queueDelay, rateLimitState, activeAiMode, effectiveUid, isAutoAiEnabled]);
 
   // BMAD: Logic to reset premium mode to caveman when no more queued items
   useEffect(() => {
@@ -391,14 +413,14 @@ export default function App() {
     if (timeSinceManual < 15000) return;
 
     if (activeAiMode === 'premium' && !isQueueProcessing) {
+      // Bug #1 Fix: Only check for explicitly queued/pending items, NOT quality thresholds
       const hasQueued = links.some(l => 
         l.aiProcessingStatus === 'queued' || 
-        l.aiProcessingStatus === 'pending' ||
-        (l.enrichmentConfidence !== undefined && l.enrichmentConfidence < 0.8)
+        l.aiProcessingStatus === 'pending'
       );
       
       if (!hasQueued) {
-        console.log("[AI Worker] All items processed or high quality. Resetting to Caveman mode.");
+        console.log("[AI Worker] Premium sync complete — all queued items processed. Resetting to Caveman mode.");
         setActiveAiMode('caveman');
       }
     }
@@ -837,6 +859,21 @@ export default function App() {
             }
           }}
         />
+      )}
+
+      {/* AI Diagnostics Banner — visible when there are recent errors */}
+      {aiLastError && (Date.now() - aiLastError.ts) < 5 * 60 * 1000 && (
+        <div className="fixed bottom-4 left-4 z-50 max-w-md bg-red-950/90 border border-red-800/60 rounded-xl p-3 backdrop-blur-sm shadow-2xl flex items-start gap-3">
+          <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-red-300">AI Engine Error</p>
+            <p className="text-[11px] text-red-400/80 font-mono truncate mt-0.5">{aiLastError.msg}</p>
+            <p className="text-[10px] text-red-600 mt-1">{new Date(aiLastError.ts).toLocaleTimeString()} — Controlla la Console per dettagli</p>
+          </div>
+          <button onClick={() => setAiLastError(null)} className="text-red-600 hover:text-red-400 shrink-0">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
       )}
 
       {/* Header / Nav */}

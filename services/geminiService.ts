@@ -376,37 +376,12 @@ export const enrichLinksBatch = async (
         return {};
       }
 
-      // BMAD FASE 4: Quality Scoring & Refinement (Premium only)
+      // Return results directly — quality scoring happens client-side in App.tsx
+      // NOTE: Per-item refinement calls removed (was causing double quota consumption)
       const finalResults: Record<string, Partial<EnrichmentResult>> = {};
-
       for (const item of items) {
-        let result = results[item.id];
-        
-        if (result && mode === 'premium') {
-          // Valutazione qualità
-          const quality = evaluateCardQuality({ ...item, ...result } as any);
-          
-          if (quality < 0.75) {
-            if (import.meta.env.DEV) console.log(`[AI] Quality low (${quality.toFixed(2)}) for ${item.name}. Refining...`);
-            
-            try {
-              const specializedPrompt = getSpecializedPrompt(result.category || "General", item.name, item.url);
-              const refinementResponse = await callWithModelRotation(specializedPrompt, { maxOutputTokens: 256 });
-              const refinedDesc = refinementResponse.text?.trim();
-              
-              if (refinedDesc && refinedDesc.length > 20) {
-                result.description = refinedDesc;
-                if (import.meta.env.DEV) console.log(`[AI] Refined description for ${item.name}`);
-              }
-            } catch (re) {
-              console.warn(`[AI] Refinement failed for ${item.name}`, re);
-            }
-          }
-        }
-        
-        if (result) finalResults[item.id] = result;
+        if (results[item.id]) finalResults[item.id] = results[item.id];
       }
-
       return finalResults;
 
     } catch (pe) {
