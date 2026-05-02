@@ -363,6 +363,9 @@ export default function App() {
             updated.lastEnrichedAt = Date.now();
           }
 
+          // Firebase non supporta valori 'undefined' - li ripuliamo
+          Object.keys(updated).forEach(key => updated[key] === undefined && delete updated[key]);
+
           await updateLink(effectiveUid!, updated as unknown as LinkItem);
         }
 
@@ -475,6 +478,9 @@ export default function App() {
         updated.enrichmentConfidence = realQuality;
         updated.enrichmentPromptVersion = ENRICHMENT_PROMPT_VERSION;
         updated.lastEnrichedAt = Date.now();
+
+        // Firebase non supporta valori 'undefined'
+        Object.keys(updated).forEach(key => updated[key] === undefined && delete updated[key]);
 
         await updateLink(effectiveUid, updated as LinkItem);
         setRateLimitState(prev => recordSuccess(prev));
