@@ -16,14 +16,24 @@ import {
 const RAW_API_KEY = import.meta.env.GEMINI_API_KEY || "";
 const RAW_MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
 
-// Sanificazione: Rimuove eventuali apici o spazi bianchi che possono finire nelle variabili Vercel/Env
-const API_KEY = RAW_API_KEY.replace(/['"]+/g, '').trim();
+// Supporto per rotazione CHIAVI se specificate come lista separata da virgola
+const API_KEYS = RAW_API_KEY.split(',')
+  .map(k => k.replace(/['"]+/g, '').trim())
+  .filter(k => k.length > 0);
 
-// Supporto per rotazione modelli se specificati come lista separata da virgola
-const MODEL_LIST = RAW_MODEL_NAME.split(',').map(m => m.replace(/['"]+/g, '').trim());
+// Supporto per rotazione MODELLI se specificati come lista separata da virgola
+const MODEL_LIST = RAW_MODEL_NAME.split(',')
+  .map(m => m.replace(/['"]+/g, '').trim())
+  .filter(m => m.length > 0);
 
-console.log(`AI Service Init - Models: ${MODEL_LIST.join(', ')}`);
-console.log(`AI Service Init - Key Info: Len=${API_KEY.length}, Prefix=${API_KEY.substring(0, 5)}..., Suffix=...${API_KEY.substring(API_KEY.length - 4)}`);
+// Stato interno per la rotazione
+let currentKeyIndex = 0;
+
+console.log(`AI Service Init - Keys: ${API_KEYS.length}, Models: ${MODEL_LIST.join(', ')}`);
+if (API_KEYS.length > 0) {
+  const k = API_KEYS[0];
+  console.log(`AI Service Init - Primary Key Info: Len=${k.length}, Prefix=${k.substring(0, 5)}..., Suffix=...${k.substring(k.length - 4)}`);
+}
 
 /**
  * Token limits per model (TPM - Tokens Per Minute)
@@ -68,7 +78,10 @@ function sanitizeConfigForModel(model: string, config: any) {
   return sanitized;
 }
 
-export const getAiClient = () => new GoogleGenAI({ apiKey: API_KEY });
+export const getAiClient = (keyOverride?: string) => {
+  const key = keyOverride || API_KEYS[currentKeyIndex] || "";
+  return new GoogleGenAI({ apiKey: key });
+};
 
 const isValidUrl = (url: string): boolean => {
   try {
@@ -84,54 +97,68 @@ const isLocalUrl = (url: string): boolean => {
 };
 
 /**
- * HELPER per rotazione modelli in caso di quota esaurita (429)
+ * HELPER per rotazione modelli e CHIAVI in caso di quota esaurita (429)
  */
 async function callWithModelRotation(contents: string, config: any): Promise<any> {
-  const ai = getAiClient();
   let lastError = null;
 
-  for (const model of MODEL_LIST) {
-    try {
-      console.log(`Tentativo con modello: ${model}...`);
-      const response = await ai.models.generateContent({
-        model,
-        contents: contents,
-        config: sanitizeConfigForModel(model, config)
-      });
-      if (response.text) {
-        console.log(`Modello ${model} ha risposto con successo.`);
-        return response;
-      }
-    } catch (error: any) {
-      const isRateLimit = error.message?.includes('429') || error.status === 429;
-      const isBadRequest = error.message?.includes('400') || error.status === 400;
+  // Proviamo a ruotare le chiavi
+  for (let k = 0; k < API_KEYS.length; k++) {
+    const keyIndex = (currentKeyIndex + k) % API_KEYS.length;
+    const ai = getAiClient(API_KEYS[keyIndex]);
 
-      if (isRateLimit) {
-        console.warn(`Modello ${model} esaurito (Quota). Provo il prossimo...`);
+    // Per ogni chiave, proviamo i modelli
+    for (const model of MODEL_LIST) {
+      try {
+        console.log(`[AI] Tentativo con Chiave #${keyIndex} - Modello: ${model}...`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: contents,
+          config: sanitizeConfigForModel(model, config)
+        });
+        
+        if (response.text) {
+          // Se ha funzionato, aggiorniamo l'indice globale per iniziare da questa chiave la prossima volta
+          currentKeyIndex = keyIndex;
+          return response;
+        }
+      } catch (error: any) {
+        const isRateLimit = error.message?.includes('429') || error.status === 429;
+        const isQuotaExceeded = error.message?.includes('quota') || error.message?.includes('limit');
+        const isBadRequest = error.message?.includes('400') || error.status === 400;
+
+        if (isRateLimit || isQuotaExceeded) {
+          console.warn(`[AI] Quota esaurita per Chiave #${keyIndex} / Modello ${model}.`);
+          lastError = error;
+          continue; // Passa al prossimo modello della stessa chiave, o alla prossima chiave
+        }
+
+        if (isBadRequest && model.includes('lite')) {
+          console.warn(`[AI] Modello ${model} ha rifiutato la config (400). Riprovo con config semplificata...`);
+          try {
+            const simpleResponse = await ai.models.generateContent({
+              model,
+              contents: contents,
+              config: {} // Riprova senza JSON schema o altro
+            });
+            if (simpleResponse.text) {
+              currentKeyIndex = keyIndex;
+              return simpleResponse;
+            }
+          } catch (e2) {
+            console.error(`[AI] Fallimento anche con config semplificata su ${model}`);
+          }
+        }
+
+        console.error(`[AI] Errore su modello ${model}:`, error.message);
         lastError = error;
         continue;
       }
-
-      if (isBadRequest && model.includes('lite')) {
-        console.warn(`Modello ${model} ha rifiutato la config (400). Riprovo con config semplificata...`);
-        try {
-          const simpleResponse = await ai.models.generateContent({
-            model,
-            contents: contents,
-            config: {} // Riprova senza JSON schema o altro
-          });
-          if (simpleResponse.text) return simpleResponse;
-        } catch (e2) {
-          console.error(`Fallimento anche con config semplificata su ${model}`);
-        }
-      }
-
-      console.error(`Errore critico su modello ${model}:`, error.message);
-      lastError = error;
-      continue; // Passa comunque al prossimo modello invece di bloccarsi
     }
+    console.warn(`[AI] Tutti i modelli falliti per la chiave #${keyIndex}. Passo alla prossima chiave...`);
   }
-  throw lastError || new Error("Nessun modello disponibile");
+  
+  throw lastError || new Error("Nessun modello o chiave disponibile");
 }
 
 /**

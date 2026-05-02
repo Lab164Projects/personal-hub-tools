@@ -898,11 +898,11 @@ export default function App() {
               <button
                 onClick={handleForceBulkEnrichment}
                 disabled={loadingLinks || isQueueProcessing || links.length === 0}
-                className="p-2 text-gray-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50"
-                title="Forza Sincronizzazione Totale (Applica Italiano, Smart Names e Emoji)"
+                className={`p-2 rounded-lg transition-all flex items-center gap-2 border shadow-lg ${isQueueProcessing ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-gray-400 hover:text-emerald-400 bg-gray-800/40 border-gray-800 hover:border-emerald-500/30'}`}
+                title="🧠 PREMIUM SYNC: Forza Sincronizzazione Totale (Prompt Espansi, Qualità Massima)"
               >
-                <RotateCcw className={`w-5 h-5 ${loadingLinks ? 'animate-spin' : ''}`} />
-                <span className="text-xs hidden md:inline">Forza Sync</span>
+                <Sparkles className={`w-5 h-5 ${isQueueProcessing ? 'animate-pulse text-emerald-400' : ''}`} />
+                <span className="text-xs hidden md:inline font-bold">Premium Sync</span>
               </button>
 
               <div className="w-px h-6 bg-gray-800 mx-1"></div>
@@ -1138,7 +1138,7 @@ export default function App() {
                   </div>
                   <span className="text-[9px] text-gray-500 uppercase font-bold tracking-tighter">Qualità Bassa</span>
                   <button 
-                    onClick={() => processLinkEnrichment(link)}
+                    onClick={() => handleManualAiAnalysis(link)}
                     className="p-1 rounded bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20 transition-colors"
                     title="Migliora qualità con Premium AI"
                   >
