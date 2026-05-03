@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { enrichWithPollinations } from "./aiFallbackService";
 import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
 import {
@@ -27,9 +28,24 @@ const API_KEYS = RAW_API_KEY.split(',')
   .filter(k => k.length > 0);
 
 // Supporto per rotazione MODELLI se specificati come lista separata da virgola
-const MODEL_LIST = RAW_MODEL_NAME.split(',')
-  .map(m => m.replace(/['"]+/g, '').trim())
-  .filter(m => m.length > 0 && !m.includes('tts') && !m.includes('3-flash'));
+// MODELLI FREE TIER VALIDI (Maggio 2026):
+//   - gemini-2.5-flash: modello Flash più recente, free tier attivo
+//   - gemini-1.5-flash: stabile, free tier con 1500 RPD
+//   - gemini-1.5-flash-8b: leggero, free tier con limiti generosi
+// RIMOSSI: gemini-2.0-flash-exp (deprecato giu 2026), gemini-1.5-pro (solo paid apr 2026)
+const DEFAULT_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
+];
+
+// Filtra automaticamente modelli noti come non-free-tier o deprecati
+const BLOCKED_MODELS = ['gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-1.0-pro'];
+
+const MODEL_LIST = (RAW_MODEL_NAME 
+  ? RAW_MODEL_NAME.split(',').map(m => m.replace(/['"]+/g, '').trim()).filter(m => m.length > 0)
+  : DEFAULT_MODELS
+).filter(m => !BLOCKED_MODELS.includes(m));
 
 // Stato interno per la rotazione
 let currentKeyIndex = 0;
@@ -42,14 +58,15 @@ if (API_KEYS.length > 0) {
 
 /**
  * Token limits per model (TPM - Tokens Per Minute)
- * Real free-tier limits from Google Cloud Console (2025):
- *   gemini-2.5-flash:      5 req/min, 20 req/day, 250k TPM
- *   gemini-2.5-flash-lite: 10 req/min, 20 req/day, 250k TPM
+ * Free-tier limits (Maggio 2026):
+ *   gemini-2.5-flash:      15 req/min, 1500 req/day (Flash standard)
+ *   gemini-1.5-flash:      15 req/min, 1500 req/day
+ *   gemini-1.5-flash-8b:   15 req/min, 1500 req/day (leggero)
  */
 const MODEL_TOKEN_LIMITS: Record<string, number> = {
-  'gemini-2.5-flash-lite': 250000,
   'gemini-2.5-flash': 250000,
   'gemini-1.5-flash': 250000,
+  'gemini-1.5-flash-8b': 250000,
   'default': 100000
 };
 
@@ -65,9 +82,9 @@ const MAX_PRACTICAL_BATCH = 5;
  * Respects both TPM and the practical daily request budget.
  */
 export function getMaxBatchSize(mode: PromptMode = 'caveman'): number {
-  // Bug #2 Fix: Il batching causava errori di parsing JSON e troncamento su modelli free.
-  // Torniamo a 1 per volta come nella versione originale per massima stabilità.
-  return 1;
+  // Bug #2 Fix Refined: Per caveman mode (compresso) usiamo batch da 3 per risparmiare quota giornaliera.
+  // Per premium mode (dettagliato) restiamo a 1 per evitare troncamenti JSON.
+  return mode === 'caveman' ? 3 : 1;
 }
 
 /**
@@ -81,7 +98,8 @@ function sanitizeConfigForModel(model: string, config: any) {
   const isLimitedModel = 
     model.includes('8b') || 
     model.includes('lite') || 
-    (model.includes('1.5') && !model.includes('flash') && !model.includes('pro'));
+    (model.includes('1.5') && !model.includes('flash') && !model.includes('pro')) ||
+    model.includes('1.0');
 
   if (isLimitedModel) {
     console.warn(`[AI] Modello ${model} limitato rilevato. Rimuovo responseSchema per stabilità.`);
@@ -114,6 +132,7 @@ const isLocalUrl = (url: string): boolean => {
  */
 async function callWithModelRotation(contents: string, config: any): Promise<any> {
   let lastError = null;
+  let allRateLimited = true; // Track se TUTTI i fallimenti sono 429/quota
 
   for (let k = 0; k < API_KEYS.length; k++) {
     const keyIndex = (currentKeyIndex + k) % API_KEYS.length;
@@ -134,7 +153,6 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
           }
         });
 
-        // Chiamata corretta SDK v1.x
         const result = await model.generateContent(contents);
         const response = await result.response;
         const text = response.text();
@@ -144,16 +162,35 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
           return { response, text };
         }
       } catch (error: any) {
-        const errorMsg = error.message?.toLowerCase() || "";
-        const isRateLimit = errorMsg.includes('429') || error.status === 429 || errorMsg.includes('quota');
-        const isBadRequest = errorMsg.includes('400') || error.status === 400 || errorMsg.includes('invalid');
+        // Estrazione errore robusta (alcuni errori SDK v1.x sono nidificati)
+        const status = error.status || error.response?.status || 
+          error.errorDetails?.[0]?.httpStatusCode || 0;
+        const errorMsg = (error.message || "").toLowerCase();
+        
+        const isRateLimit = status === 429 || 
+          errorMsg.includes('429') || 
+          errorMsg.includes('quota') || 
+          errorMsg.includes('resource has been exhausted') ||
+          errorMsg.includes('rate limit') ||
+          errorMsg.includes('too many requests');
+        const isModelNotFound = status === 404 || errorMsg.includes('not found') || errorMsg.includes('is not found');
+        const isBadRequest = status === 400 || errorMsg.includes('invalid');
         const isSafety = errorMsg.includes('safety') || errorMsg.includes('blocked');
 
-        if (isRateLimit) {
-          console.warn(`[AI] Quota esaurita su Chiave #${keyIndex} / Modello ${modelName}.`);
+        if (isModelNotFound) {
+          console.warn(`[AI] Modello ${modelName} non trovato (404). Passo al prossimo.`);
           lastError = error;
-          continue; 
+          continue;
         }
+
+        if (isRateLimit) {
+          console.warn(`[AI] Quota/Rate Limit su Chiave #${keyIndex} / Modello ${modelName}.`);
+          lastError = error;
+          continue; // Prova prossimo modello/chiave
+        }
+
+        // Se arrivi qui, non è un rate limit → non tutti sono rate-limited
+        allRateLimited = false;
 
         if (isSafety) {
           console.error(`[AI] Contenuto bloccato dai filtri di sicurezza su ${modelName}. Non riprovo.`);
@@ -182,8 +219,28 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
     }
     console.warn(`[AI] Chiave #${keyIndex} esaurita o modelli non rispondenti.`);
   }
+
+  // === FALLBACK POLLINATIONS.AI ===
+  // Se tutti i modelli Gemini hanno fallito (soprattutto per quota), 
+  // proviamo il servizio gratuito Pollinations.ai come ultima risorsa.
+  if (allRateLimited) {
+    console.warn(`[AI] TUTTI i modelli Gemini esauriti. Attivando fallback Pollinations.ai...`);
+    try {
+      // Estraiamo un testo di ricerca dal contenuto del prompt
+      const searchTermExtract = contents.substring(0, 500);
+      const pollinationsResult = await enrichWithPollinations(searchTermExtract);
+      if (pollinationsResult) {
+        console.log(`[AI] ✅ Pollinations fallback riuscito!`);
+        // Convertiamo il risultato nel formato atteso
+        const text = JSON.stringify(pollinationsResult);
+        return { text, isFallback: true };
+      }
+    } catch (fbError: any) {
+      console.error(`[AI] ❌ Anche Pollinations fallback fallito:`, fbError.message);
+    }
+  }
   
-  throw lastError || new Error("Nessuna risorsa AI disponibile");
+  throw lastError || new Error("Nessuna risorsa AI disponibile (Gemini + Pollinations esauriti)");
 }
 
 /**

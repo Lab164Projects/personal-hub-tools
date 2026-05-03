@@ -25,7 +25,7 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks: {
             'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore'],
-            'vendor-ai': ['@google/genai'],
+            'vendor-ai': ['@google/generative-ai'],
             'vendor-react': ['react', 'react-dom'],
           }
         }

@@ -8,11 +8,11 @@ const STORAGE_KEY = 'gemini_rate_limit_state';
 // --- REAL FREE TIER LIMITS (from Google Cloud Console) ---
 // gemini-1.5-flash:      15 req/min, 1500 req/day (Free Tier)
 // gemini-1.5-pro:        2 req/min,  50 req/day (Free Tier)
-// gemini-2.5-flash:      5 req/min,  20 req/day (Free Tier)
-// We use a conservative common denominator for safety.
-const MAX_REQUESTS_PER_MINUTE = 5;          // Strict limit for Gemini 2.5
-const MAX_REQUESTS_PER_DAY = 1500;          // Theoretical max for 1.5-flash
-const SAFE_MAX_REQUESTS_PER_DAY = 20;      // Real strict limit for Gemini 2.5 Flash Free Tier
+// gemini-2.0-flash:      15 req/min, 1500 req/day (Experimental/GA)
+// We use a conservative common denominator for per-minute safety, but higher daily for Flash.
+const MAX_REQUESTS_PER_MINUTE = 5;          
+const MAX_REQUESTS_PER_DAY = 1500;          
+const SAFE_MAX_REQUESTS_PER_DAY = 1500;     // Increased to match 1.5 Flash real limits
 const COOLDOWN_DURATION_MS = 65 * 1000;
 const CHECK_INTERVAL_MS = 30 * 1000;
 
