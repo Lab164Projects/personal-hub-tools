@@ -133,7 +133,7 @@ const isLocalUrl = (url: string): boolean => {
 /**
  * HELPER per rotazione modelli e CHIAVI in caso di quota esaurita (429)
  */
-async function callWithModelRotation(contents: string, config: any): Promise<any> {
+async function callWithModelRotation(contents: string, config: any, fallbackSearchTerm?: string): Promise<any> {
   let lastError = null;
   let allRateLimited = true; // Track se TUTTI i fallimenti sono 429/quota
 
@@ -192,9 +192,7 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
           continue; // Prova prossimo modello/chiave
         }
 
-        // Se arrivi qui, non è un rate limit → non tutti sono rate-limited
-        allRateLimited = false;
-
+        // Se arrivi qui, non è un rate limit o 404.
         if (isSafety) {
           console.error(`[AI] Contenuto bloccato dai filtri di sicurezza su ${modelName}. Non riprovo.`);
           throw new Error("Contenuto bloccato dai filtri di sicurezza Google");
@@ -224,23 +222,20 @@ async function callWithModelRotation(contents: string, config: any): Promise<any
   }
 
   // === FALLBACK POLLINATIONS.AI ===
-  // Se tutti i modelli Gemini hanno fallito (soprattutto per quota), 
-  // proviamo il servizio gratuito Pollinations.ai come ultima risorsa.
-  if (allRateLimited) {
-    console.warn(`[AI] TUTTI i modelli Gemini esauriti. Attivando fallback Pollinations.ai...`);
-    try {
-      // Estraiamo un testo di ricerca dal contenuto del prompt
-      const searchTermExtract = contents.substring(0, 500);
-      const pollinationsResult = await enrichWithPollinations(searchTermExtract);
-      if (pollinationsResult) {
-        console.log(`[AI] ✅ Pollinations fallback riuscito!`);
-        // Convertiamo il risultato nel formato atteso
-        const text = JSON.stringify(pollinationsResult);
-        return { text, isFallback: true };
-      }
-    } catch (fbError: any) {
-      console.error(`[AI] ❌ Anche Pollinations fallback fallito:`, fbError.message);
+  // Se tutti i modelli Gemini hanno fallito, proviamo il servizio gratuito Pollinations.ai come ultima risorsa.
+  console.warn(`[AI] Nessun modello Gemini disponibile. Attivando fallback Pollinations.ai...`);
+  try {
+    // Usiamo il search term specifico (es. l'URL) se passato, altrimenti estraiamo
+    const searchTerm = fallbackSearchTerm || contents.substring(0, 500);
+    const pollinationsResult = await enrichWithPollinations(searchTerm);
+    if (pollinationsResult) {
+      console.log(`[AI] ✅ Pollinations fallback riuscito!`);
+      // Convertiamo il risultato nel formato atteso
+      const text = JSON.stringify(pollinationsResult);
+      return { text, isFallback: true };
     }
+  } catch (fbError: any) {
+    console.error(`[AI] ❌ Anche Pollinations fallback fallito:`, fbError.message);
   }
   
   throw lastError || new Error("Nessuna risorsa AI disponibile (Gemini + Pollinations esauriti)");
@@ -319,7 +314,7 @@ export const enrichLinkData = async (
         required: ["category", "description", "tags"]
       },
       maxOutputTokens: config.maxOutputTokens,
-    });
+    }, url || name);
     const text = response.text;
     if (!text) throw new Error("Risposta IA vuota");
 
