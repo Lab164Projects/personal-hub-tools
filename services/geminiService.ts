@@ -57,8 +57,8 @@ const TOKENS_PER_ITEM = 600;  // Premium prompt is larger — conservative estim
 const SAFETY_MARGIN = 0.6;    // 60% of TPM to stay well within limits
 // With 20 req/day (Gemini 2.5 limit), we need a larger batch to process the 600+ card library.
 // Premium mode generates ~200 output tokens per item. 8192 max output limit / 200 = ~40 items max.
-// We set batch to 35 to be safe from JSON truncation, allowing 35 * 18 = 630 cards per day.
-const MAX_PRACTICAL_BATCH = 35;
+// We set batch to 25 to be safe from JSON truncation, allowing 25 * 18 = 450 cards per day.
+const MAX_PRACTICAL_BATCH = 25;
 
 /**
  * Calculate max batch size based on the primary model's token limits.

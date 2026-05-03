@@ -267,15 +267,69 @@ export function parseBatchResponse(
     }
   }
 
-  const rawResult: Record<string, Partial<EnrichmentResult>> = JSON.parse(cleanText);
-  const normalizedResult: Record<string, Partial<EnrichmentResult>> = {};
+  let normalizedResult: Record<string, Partial<EnrichmentResult>> = {};
 
-  for (const key in rawResult) {
-    const originalItem = originalItems.find(
-      it => it.id.toLowerCase() === key.toLowerCase()
-    );
-    if (originalItem) {
-      normalizedResult[originalItem.id] = rawResult[key];
+  try {
+    const rawResult: Record<string, Partial<EnrichmentResult>> = JSON.parse(cleanText);
+    for (const key in rawResult) {
+      const originalItem = originalItems.find(
+        it => it.id.toLowerCase() === key.toLowerCase()
+      );
+      if (originalItem) {
+        normalizedResult[originalItem.id] = rawResult[key];
+      }
+    }
+  } catch (e) {
+    console.warn("[AI] Standard JSON.parse failed. Attempting to recover partial JSON...");
+    
+    // Fallback: extract valid objects by matching their IDs
+    for (const item of originalItems) {
+      // Find where this item's key starts
+      const idRegex = new RegExp(`"${item.id}"\\s*:\\s*\\{`, 'i');
+      const match = cleanText.match(idRegex);
+      
+      if (match && match.index !== undefined) {
+        const startBrace = match.index + match[0].length - 1;
+        
+        let braceCount = 0;
+        let endBrace = -1;
+        let inString = false;
+        let escape = false;
+
+        for (let i = startBrace; i < cleanText.length; i++) {
+          const char = cleanText[i];
+          if (escape) { escape = false; continue; }
+          if (char === '\\') { escape = true; continue; }
+          if (char === '"') { inString = !inString; continue; }
+
+          if (!inString) {
+            if (char === '{') braceCount++;
+            else if (char === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                endBrace = i;
+                break;
+              }
+            }
+          }
+        }
+
+        if (endBrace !== -1) {
+          try {
+            const objText = cleanText.substring(startBrace, endBrace + 1);
+            const itemObj = JSON.parse(objText);
+            normalizedResult[item.id] = itemObj;
+          } catch (err) {
+            console.warn(`[AI] Recovery failed for ${item.id}`);
+          }
+        }
+      }
+    }
+
+    if (Object.keys(normalizedResult).length === 0) {
+      throw e; // Rethrow if we couldn't recover ANY item
+    } else {
+      console.log(`[AI] Successfully recovered ${Object.keys(normalizedResult).length} out of ${originalItems.length} items from truncated response.`);
     }
   }
 
