@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { LinkItem } from "../types";
 import { getCachedData, setCachedData, getEnrichmentKey, getSearchKey } from "./cacheService";
 import {
@@ -58,37 +58,42 @@ const SAFETY_MARGIN = 0.6;    // 60% of TPM to stay well within limits
 // With 20 req/day (Gemini 2.5 limit), we need a larger batch to process the 600+ card library.
 // Premium mode generates ~200 output tokens per item. 8192 max output limit / 200 = ~40 items max.
 // We set batch to 25 to be safe from JSON truncation, allowing 25 * 18 = 450 cards per day.
-const MAX_PRACTICAL_BATCH = 25;
+const MAX_PRACTICAL_BATCH = 5;
 
 /**
  * Calculate max batch size based on the primary model's token limits.
  * Respects both TPM and the practical daily request budget.
  */
-export function getMaxBatchSize(): number {
-  const primaryModel = MODEL_LIST[0] || 'default';
-  const tokenLimit = MODEL_TOKEN_LIMITS[primaryModel] || MODEL_TOKEN_LIMITS['default'];
-  const theoreticalMax = Math.floor((tokenLimit * SAFETY_MARGIN) / TOKENS_PER_ITEM);
-  const finalBatchSize = Math.min(theoreticalMax, MAX_PRACTICAL_BATCH);
-  console.log(`[AI] Batch Size: ${finalBatchSize} items (Model: ${primaryModel}, TPM: ${tokenLimit})`);
-  return finalBatchSize;
+export function getMaxBatchSize(mode: PromptMode = 'caveman'): number {
+  // Bug #2 Fix: Il batching causava errori di parsing JSON e troncamento su modelli free.
+  // Torniamo a 1 per volta come nella versione originale per massima stabilità.
+  return 1;
 }
 
 /**
  * HELPER per rimuovere config avanzate che causano 400 su modelli vecchi/lite
+ * Alcuni modelli (specialmente -8b o versioni vecchie) non supportano responseSchema
  */
 function sanitizeConfigForModel(model: string, config: any) {
   const sanitized = { ...config };
-  // Alcuni modelli lite/flash-lite non supportano responseMimeType o responseSchema
-  if (model.includes('lite') || model.includes('pro')) {
-    // Mantieni la config base se necessario, ma rimuovi schema se sospetto
-    // Per ora proviamo a rimuovere solo se fallisce
+  
+  // Lista di modelli noti per avere problemi con JSON Schema strutturato
+  const isLimitedModel = 
+    model.includes('8b') || 
+    model.includes('lite') || 
+    (model.includes('1.5') && !model.includes('flash') && !model.includes('pro'));
+
+  if (isLimitedModel) {
+    console.warn(`[AI] Modello ${model} limitato rilevato. Rimuovo responseSchema per stabilità.`);
+    delete sanitized.responseSchema;
   }
+  
   return sanitized;
 }
 
 export const getAiClient = (keyOverride?: string) => {
   const key = keyOverride || API_KEYS[currentKeyIndex] || "";
-  return new GoogleGenAI({ apiKey: key });
+  return new GoogleGenerativeAI(key);
 };
 
 const isValidUrl = (url: string): boolean => {
@@ -110,90 +115,75 @@ const isLocalUrl = (url: string): boolean => {
 async function callWithModelRotation(contents: string, config: any): Promise<any> {
   let lastError = null;
 
-  // Proviamo a ruotare le chiavi
   for (let k = 0; k < API_KEYS.length; k++) {
     const keyIndex = (currentKeyIndex + k) % API_KEYS.length;
-    const ai = getAiClient(API_KEYS[keyIndex]);
+    const genAI = getAiClient(API_KEYS[keyIndex]);
 
-    // Per ogni chiave, proviamo i modelli
-    for (const model of MODEL_LIST) {
+    for (const modelName of MODEL_LIST) {
       try {
-        console.log(`[AI] Tentativo con Chiave #${keyIndex} - Modello: ${model}...`);
+        console.log(`[AI] Tentativo con Chiave #${keyIndex} - Modello: ${modelName}...`);
         
-        // Puliamo la config per il modello specifico
-        const modelConfig = sanitizeConfigForModel(model, config);
-        
-        const response = await ai.models.generateContent({
-          model,
-          contents: [{ role: 'user', parts: [{ text: contents }] }],
-          config: modelConfig
-        });
-        
-        // Estrazione testo ultra-robusta per @google/genai
-        let text = "";
-        const anyResp = response as any;
-        try {
-          if (anyResp.candidates?.[0]?.content?.parts?.[0]?.text) {
-            text = anyResp.candidates[0].content.parts[0].text;
-          } else if (typeof anyResp['text'] === 'function') {
-            text = await anyResp['text']();
-          } else if (anyResp.text) {
-            text = anyResp.text;
+        const modelConfig = sanitizeConfigForModel(modelName, config);
+        const model = genAI.getGenerativeModel({ 
+          model: modelName,
+          generationConfig: {
+            responseMimeType: modelConfig.responseMimeType,
+            responseSchema: modelConfig.responseSchema,
+            maxOutputTokens: modelConfig.maxOutputTokens || 2048,
+            temperature: modelConfig.temperature || 0.2,
           }
-        } catch (e) {
-          console.warn("[AI] Fallimento estrazione testo standard, provo fallback...");
-        }
+        });
+
+        // Chiamata corretta SDK v1.x
+        const result = await model.generateContent(contents);
+        const response = await result.response;
+        const text = response.text();
 
         if (text) {
           currentKeyIndex = keyIndex;
-          // Restituiamo un oggetto compatibile che include il testo estratto
-          return { ...response, text };
+          return { response, text };
         }
       } catch (error: any) {
-        const isRateLimit = error.message?.includes('429') || error.status === 429;
-        const isQuotaExceeded = error.message?.includes('quota') || error.message?.includes('limit');
-        const isBadRequest = error.message?.includes('400') || error.status === 400;
+        const errorMsg = error.message?.toLowerCase() || "";
+        const isRateLimit = errorMsg.includes('429') || error.status === 429 || errorMsg.includes('quota');
+        const isBadRequest = errorMsg.includes('400') || error.status === 400 || errorMsg.includes('invalid');
+        const isSafety = errorMsg.includes('safety') || errorMsg.includes('blocked');
 
-        if (isRateLimit || isQuotaExceeded) {
-          console.warn(`[AI] Quota esaurita o Rate Limit per Chiave #${keyIndex} / Modello ${model}.`);
+        if (isRateLimit) {
+          console.warn(`[AI] Quota esaurita su Chiave #${keyIndex} / Modello ${modelName}.`);
           lastError = error;
           continue; 
         }
 
-        if (isBadRequest) {
-          console.warn(`[AI] Modello ${model} ha rifiutato la config (400). Riprovo senza schema...`);
-          try {
-            const simpleResponse = await ai.models.generateContent({
-              model,
-              contents: [{ role: 'user', parts: [{ text: contents }] }],
-              config: { maxOutputTokens: config.maxOutputTokens || 2048 }
-            });
-            
-            let simpleText = "";
-            if (simpleResponse.candidates?.[0]?.content?.parts?.[0]?.text) {
-              simpleText = simpleResponse.candidates[0].content.parts[0].text;
-            } else if (simpleResponse.text) {
-              simpleText = simpleResponse.text;
-            }
+        if (isSafety) {
+          console.error(`[AI] Contenuto bloccato dai filtri di sicurezza su ${modelName}. Non riprovo.`);
+          throw new Error("Contenuto bloccato dai filtri di sicurezza Google");
+        }
 
-            if (simpleText) {
-              currentKeyIndex = keyIndex;
-              return { ...simpleResponse, text: simpleText };
+        if (isBadRequest) {
+          console.warn(`[AI] Modello ${modelName} rifiuta config (400). Provo senza schema...`);
+          try {
+            const fallbackModel = genAI.getGenerativeModel({ model: modelName });
+            const fbResult = await fallbackModel.generateContent(contents);
+            const fbText = (await fbResult.response).text();
+            if (fbText) {
+              console.log(`[AI] Fallback senza schema riuscito su ${modelName}`);
+              return { text: fbText };
             }
-          } catch (e2) {
-            console.error(`[AI] Fallimento totale su ${model}`);
+          } catch (e2: any) {
+            console.error(`[AI] Fallimento totale fallback su ${modelName}:`, e2.message);
           }
         }
 
-        console.error(`[AI] Errore critico su modello ${model}:`, error.message);
+        console.error(`[AI] Errore su ${modelName}:`, error.message);
         lastError = error;
         continue;
       }
     }
-    console.warn(`[AI] Tutti i modelli falliti per la chiave #${keyIndex}. Passo alla prossima chiave...`);
+    console.warn(`[AI] Chiave #${keyIndex} esaurita o modelli non rispondenti.`);
   }
   
-  throw lastError || new Error("Nessun modello o chiave disponibile");
+  throw lastError || new Error("Nessuna risorsa AI disponibile");
 }
 
 /**
@@ -239,32 +229,32 @@ export const enrichLinkData = async (
     const response = await callWithModelRotation(prompt, {
       responseMimeType: "application/json",
       responseSchema: mode === 'premium' ? {
-        type: Type.OBJECT,
+        type: SchemaType.OBJECT,
         properties: {
-          category: { type: Type.STRING },
-          description: { type: Type.STRING },
-          shortDescription: { type: Type.STRING },
-          categoryPath: { type: Type.STRING },
-          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-          useCases: { type: Type.ARRAY, items: { type: Type.STRING } },
-          targetAudience: { type: Type.STRING },
-          toolLanguage: { type: Type.STRING },
-          toolStatus: { type: Type.STRING },
-          conceptFingerprint: { type: Type.ARRAY, items: { type: Type.STRING } },
-          emoji: { type: Type.STRING },
-          suggestedName: { type: Type.STRING },
-          confidence: { type: Type.NUMBER },
+          category: { type: SchemaType.STRING },
+          description: { type: SchemaType.STRING },
+          shortDescription: { type: SchemaType.STRING },
+          categoryPath: { type: SchemaType.STRING },
+          tags: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+          useCases: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+          targetAudience: { type: SchemaType.STRING },
+          toolLanguage: { type: SchemaType.STRING },
+          toolStatus: { type: SchemaType.STRING },
+          conceptFingerprint: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+          emoji: { type: SchemaType.STRING },
+          suggestedName: { type: SchemaType.STRING },
+          confidence: { type: SchemaType.NUMBER },
         },
         required: ["category", "description", "tags"]
       } : {
-        type: Type.OBJECT,
+        type: SchemaType.OBJECT,
         properties: {
-          category: { type: Type.STRING },
-          description: { type: Type.STRING },
-          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
-          emoji: { type: Type.STRING },
-          suggestedName: { type: Type.STRING },
-          confidence: { type: Type.NUMBER },
+          category: { type: SchemaType.STRING },
+          description: { type: SchemaType.STRING },
+          tags: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+          emoji: { type: SchemaType.STRING },
+          suggestedName: { type: SchemaType.STRING },
+          confidence: { type: SchemaType.NUMBER },
         },
         required: ["category", "description", "tags"]
       },
@@ -323,35 +313,35 @@ export const enrichLinksBatch = async (
     const response = await callWithModelRotation(prompt, {
       responseMimeType: "application/json",
       responseSchema: mode === 'premium' ? {
-        type: Type.OBJECT,
+        type: SchemaType.OBJECT,
         additionalProperties: {
-          type: Type.OBJECT,
+          type: SchemaType.OBJECT,
           properties: {
-            category: { type: Type.STRING },
-            description: { type: Type.STRING },
-            shortDescription: { type: Type.STRING },
-            categoryPath: { type: Type.STRING },
-            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            category: { type: SchemaType.STRING },
+            description: { type: SchemaType.STRING },
+            shortDescription: { type: SchemaType.STRING },
+            categoryPath: { type: SchemaType.STRING },
+            tags: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
             enrichedTags: { 
-              type: Type.ARRAY, 
+              type: SchemaType.ARRAY, 
               items: { 
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  value: { type: Type.STRING },
-                  type: { type: Type.STRING },
-                  weight: { type: Type.NUMBER }
+                  value: { type: SchemaType.STRING },
+                  type: { type: SchemaType.STRING },
+                  weight: { type: SchemaType.NUMBER }
                 },
                 required: ["value", "type", "weight"]
               } 
             },
-            useCases: { type: Type.ARRAY, items: { type: Type.STRING } },
-            targetAudience: { type: Type.STRING },
-            toolLanguage: { type: Type.STRING },
-            toolStatus: { type: Type.STRING },
-            conceptFingerprint: { type: Type.ARRAY, items: { type: Type.STRING } },
-            emoji: { type: Type.STRING },
-            suggestedName: { type: Type.STRING },
-            confidence: { type: Type.NUMBER },
+            useCases: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            targetAudience: { type: SchemaType.STRING },
+            toolLanguage: { type: SchemaType.STRING },
+            toolStatus: { type: SchemaType.STRING },
+            conceptFingerprint: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            emoji: { type: SchemaType.STRING },
+            suggestedName: { type: SchemaType.STRING },
+            confidence: { type: SchemaType.NUMBER },
           },
           required: ["category", "description", "tags"]
         }
@@ -466,9 +456,9 @@ export const semanticSearch = async (query: string, items: LinkItem[]): Promise<
     const response = await callWithModelRotation(prompt, {
       responseMimeType: "application/json",
       responseSchema: {
-        type: Type.OBJECT,
+        type: SchemaType.OBJECT,
         properties: {
-          matchedIds: { type: Type.ARRAY, items: { type: Type.STRING } }
+          matchedIds: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }
         }
       }
     });
@@ -501,13 +491,9 @@ export const repairAndParseJson = async (rawInput: string): Promise<any[]> => {
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
 
     const text = response.text;
     if (!text) throw new Error("Risposta vuota");

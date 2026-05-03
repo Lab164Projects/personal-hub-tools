@@ -251,30 +251,34 @@ export default function App() {
     const shouldProcess = isAutoAiEnabled || activeAiMode === 'premium';
     if (!shouldProcess || rateLimitState.isInCooldown) return;
 
-    if (!canMakeRequest(rateLimitState)) return;
+    // Check both per-minute and daily quotas
+    if (!canMakeRequest(rateLimitState)) {
+      if (isDailyQuotaReached(rateLimitState)) {
+        console.log("[AI Worker] Daily quota reached. Stopping analysis for today.");
+      }
+      return;
+    }
 
     const timer = setTimeout(async () => {
-      if (rateLimitState.isInCooldown) return;
+      if (rateLimitState.isInCooldown || isProcessingRef.current) return;
 
-      const maxBatch = getMaxBatchSize();
+      const maxBatch = getMaxBatchSize(activeAiMode);
       const batchItems = links
         .filter(l => {
-          // Always process explicitly queued or pending items
           if (l.aiProcessingStatus === 'pending' || l.aiProcessingStatus === 'queued') return true;
 
-          // Retry errors after 5 minutes
           if (l.aiProcessingStatus === 'error') {
-            const fiveMins = 5 * 60 * 1000;
+            // Backoff dynamic: wait at least 3 minutes before retrying errors automatically
+            // to avoid burning daily quota on same failing items.
+            const retryInterval = Math.max(3 * 60 * 1000, queueDelay * 5);
             const timeSinceError = Date.now() - (l.lastErrorAt || 0);
-            return !l.description || l.description.includes('analisi') || timeSinceError > fiveMins;
+            return timeSinceError > retryInterval;
           }
 
-          // Bug #1 Fix: In premium mode, do NOT re-queue 'done' items based on quality.
-          // Premium mode only works on explicitly queued items to prevent infinite loops.
-          // In caveman mode, allow mild quality maintenance (threshold 0.5 only).
+          if (l.aiProcessingStatus === 'fatal_error') return false;
+
           if ((l.aiProcessingStatus === 'done' || !l.aiProcessingStatus) && activeAiMode === 'caveman') {
-            const quality = l.enrichmentConfidence ?? 0;
-            return quality < 0.5; // Only re-process very low quality in routine mode
+            return !l.aiProcessingStatus;
           }
 
           return false;
@@ -283,8 +287,6 @@ export default function App() {
 
       if (batchItems.length === 0) return;
 
-      // Bug #3 Fix: double-check ref lock before starting (state may be stale in closure)
-      if (isProcessingRef.current) return;
       isProcessingRef.current = true;
       setIsQueueProcessing(true);
       const currentMode = activeAiMode; 
@@ -343,7 +345,8 @@ export default function App() {
             category: newCat,
             tags: newTags,
             emoji: newEmoji,
-            aiProcessingStatus: newStatus
+            aiProcessingStatus: newStatus,
+            lastEnrichedAt: Date.now()
           };
 
           if (result) {
@@ -358,19 +361,15 @@ export default function App() {
             
             const realQuality = evaluateCardQuality({ ...item, ...updated } as Partial<ToolCardV2>);
             updated.enrichmentConfidence = realQuality;
-            
             updated.enrichmentPromptVersion = ENRICHMENT_PROMPT_VERSION;
-            updated.lastEnrichedAt = Date.now();
           }
 
-          // Firebase non supporta valori 'undefined' - li ripuliamo
           Object.keys(updated).forEach(key => updated[key] === undefined && delete updated[key]);
-
           await updateLink(effectiveUid!, updated as unknown as LinkItem);
         }
 
         setRateLimitState(prev => recordSuccess(prev));
-        if (queueDelay > 2000) setQueueDelay(2000);
+        setQueueDelay(2000); // Success! Reset backoff to baseline.
 
       } catch (error: unknown) {
         const err = error as { message?: string; status?: number };
@@ -380,25 +379,25 @@ export default function App() {
         console.error("[AI Worker] Batch Enrichment Failed:", {
           message: errMsg,
           isRateLimit,
-          status: err?.status,
           mode: currentMode,
-          batchSize: batchItems.length,
           timestamp: new Date().toISOString()
         });
 
         setAiLastError({ msg: errMsg, ts: Date.now() });
         setRateLimitState(prev => recordError(prev, isRateLimit));
 
-        // Revert status
         for (const item of batchItems) {
+          const isFatal = errMsg.includes('400') || errMsg.toLowerCase().includes('safety') || errMsg.toLowerCase().includes('blocked');
           await updateLink(effectiveUid!, {
             ...item,
-            aiProcessingStatus: isRateLimit ? 'queued' : 'error',
-            lastErrorAt: Date.now()
+            aiProcessingStatus: isRateLimit ? 'queued' : (isFatal ? 'fatal_error' : 'error'),
+            lastErrorAt: Date.now(),
+            lastErrorMessage: errMsg
           });
         }
 
-        if (!isRateLimit) setQueueDelay(prev => Math.min(prev * 2, 60000));
+        // Increase delay exponentially on error (max 2 mins)
+        setQueueDelay(prev => Math.min(prev * 2, 120000));
 
       } finally {
         isProcessingRef.current = false;
@@ -545,23 +544,11 @@ export default function App() {
         searchQuery,
         sourceLinks,
         async (prompt) => {
-          const ai = getAiClient();
-          const response = await ai.models.generateContent({
-            model: "gemini-1.5-flash",
-            contents: [{ role: 'user', parts: [{ text: prompt }] }]
-          });
-          
-          // Estrazione testo robusta (BMAD logic - bracket notation to bypass TS getter checks)
-          let text = "";
-          const anyResp = response as any;
-          if (anyResp.candidates?.[0]?.content?.parts?.[0]?.text) {
-            text = anyResp.candidates[0].content.parts[0].text;
-          } else if (typeof anyResp['text'] === 'function') {
-            text = await anyResp['text']();
-          } else {
-            text = anyResp.text || "";
-          }
-          return text;
+          const genAI = getAiClient();
+          const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+          const result = await model.generateContent(prompt);
+          const response = await result.response;
+          return response.text();
         }
       );
 
@@ -1058,6 +1045,11 @@ export default function App() {
               isActive={isQueueProcessing}
               itemsCount={links.filter(l => l.aiProcessingStatus === 'processing' || l.aiProcessingStatus === 'queued').length}
             />
+            {isDailyQuotaReached(rateLimitState) && (
+              <span className="flex items-center gap-1 text-red-400 bg-red-400/10 px-2 py-1 rounded-lg border border-red-400/20 animate-pulse normal-case font-bold">
+                <AlertCircle className="w-3 h-3" /> Quota Giornaliera Esaurita
+              </span>
+            )}
             {cooldownDisplay && (
               <span className="flex items-center gap-1 text-orange-400 normal-case">
                 <PauseCircle className="w-3 h-3" /> Cooldown: {cooldownDisplay}
@@ -1165,7 +1157,13 @@ export default function App() {
                 </p>
                 {link.aiProcessingStatus === 'error' && (
                   <p className="text-xs text-red-400 mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" /> Errore analisi IA (Riproverà)
+                    <AlertCircle className="w-3 h-3" /> 
+                    {isDailyQuotaReached(rateLimitState) ? 'Quota Giornaliera Esaurita' : 'Errore analisi IA (Riproverà)'}
+                  </p>
+                )}
+                {link.aiProcessingStatus === 'fatal_error' && (
+                  <p className="text-xs text-red-500 mt-1 flex items-center gap-1 font-semibold uppercase tracking-tighter">
+                    <AlertCircle className="w-3 h-3" /> Analisi Fallita (Manuale)
                   </p>
                 )}
               </div>

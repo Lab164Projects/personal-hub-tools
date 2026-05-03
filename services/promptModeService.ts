@@ -247,25 +247,26 @@ export function parseBatchResponse(
   originalItems: ReadonlyArray<BatchPromptItem>,
   _mode: PromptMode
 ): Record<string, Partial<EnrichmentResult>> {
-  // Robust JSON extraction (removes markdown backticks and extra text)
+  // --- ROBUST EXTRACTION PIPELINE ---
   let cleanText = rawText.trim();
   
-  // 1. Try to extract content inside markdown blocks
+  // 1. Remove Markdown code blocks if present (most common AI behavior)
   if (cleanText.includes('```')) {
-    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (match && match[1]) {
-      cleanText = match[1].trim();
+    const jsonMatch = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      cleanText = jsonMatch[1].trim();
     }
   }
 
-  // 2. If still no valid JSON start/end, try to find the first '{' and last '}'
-  if (!cleanText.startsWith('{') || !cleanText.endsWith('}')) {
-    const firstBrace = cleanText.indexOf('{');
-    const lastBrace = cleanText.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-    }
+  // 2. Sanitize edge cases (sometimes AI adds text before/after the object)
+  const firstBrace = cleanText.indexOf('{');
+  const lastBrace = cleanText.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleanText = cleanText.substring(firstBrace, lastBrace + 1);
   }
+
+  // 3. Remove common illegal trailing commas that break JSON.parse
+  cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
   let normalizedResult: Record<string, Partial<EnrichmentResult>> = {};
 

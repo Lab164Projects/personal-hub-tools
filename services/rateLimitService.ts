@@ -6,12 +6,14 @@
 const STORAGE_KEY = 'gemini_rate_limit_state';
 
 // --- REAL FREE TIER LIMITS (from Google Cloud Console) ---
-// gemini-2.5-flash:      5 req/min,  20 req/day
-// gemini-2.5-flash-lite: 10 req/min, 20 req/day
-// We use the LOWEST common denominator for safety across model rotation.
-const MAX_REQUESTS_PER_MINUTE = 4;          // safe for gemini-2.5-flash (limit: 5)
-const MAX_REQUESTS_PER_DAY = 18;            // safe margin below 20/day limit
-const COOLDOWN_DURATION_MS = 65 * 1000;    // 65s — ensures full minute window reset
+// gemini-1.5-flash:      15 req/min, 1500 req/day (Free Tier)
+// gemini-1.5-pro:        2 req/min,  50 req/day (Free Tier)
+// gemini-2.5-flash:      5 req/min,  20 req/day (Free Tier)
+// We use a conservative common denominator for safety.
+const MAX_REQUESTS_PER_MINUTE = 5;          // Strict limit for Gemini 2.5
+const MAX_REQUESTS_PER_DAY = 1500;          // Theoretical max for 1.5-flash
+const SAFE_MAX_REQUESTS_PER_DAY = 20;      // Real strict limit for Gemini 2.5 Flash Free Tier
+const COOLDOWN_DURATION_MS = 65 * 1000;
 const CHECK_INTERVAL_MS = 30 * 1000;
 
 export interface RateLimitState {
@@ -89,13 +91,20 @@ export const canMakeRequest = (state: RateLimitState): boolean => {
         state.requestsToday = 0;
         state.lastDayReset = Date.now();
     }
-    // Check both per-minute and per-day limits
+    
+    // Check per-minute limit
     if (state.requestsThisMinute >= MAX_REQUESTS_PER_MINUTE) return false;
-    if ((state.requestsToday || 0) >= MAX_REQUESTS_PER_DAY) {
-        console.warn(`[RateLimit] Daily quota reached (${state.requestsToday}/${MAX_REQUESTS_PER_DAY}). Waiting until tomorrow.`);
+    
+    // Check daily limit (strictly enforced for Gemini 2.5 Flash Free Tier)
+    if ((state.requestsToday || 0) >= SAFE_MAX_REQUESTS_PER_DAY) {
+        console.warn(`[RateLimit] Daily quota reached (${state.requestsToday}/${SAFE_MAX_REQUESTS_PER_DAY}).`);
         return false;
     }
     return true;
+};
+
+export const isDailyQuotaReached = (state: RateLimitState): boolean => {
+    return (state.requestsToday || 0) >= SAFE_MAX_REQUESTS_PER_DAY;
 };
 
 export const recordRequest = (state: RateLimitState): RateLimitState => {
