@@ -27,6 +27,7 @@ import {
   RateLimitState,
   loadRateLimitState,
   canMakeRequest,
+  isDailyQuotaReached,
   recordRequest,
   recordError,
   recordSuccess,
