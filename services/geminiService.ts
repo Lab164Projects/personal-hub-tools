@@ -20,7 +20,7 @@ import {
 
 // Accesso alla chiave e modello configurati (pressione GEMINI_ in vite.config.ts)
 const RAW_API_KEY = import.meta.env.GEMINI_API_KEY || "";
-const RAW_MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-1.5-flash";
+const RAW_MODEL_NAME = import.meta.env.GEMINI_MODEL || "gemini-2.0-flash";
 
 // Supporto per rotazione CHIAVI se specificate come lista separata da virgola
 const API_KEYS = RAW_API_KEY.split(',')
@@ -28,19 +28,22 @@ const API_KEYS = RAW_API_KEY.split(',')
   .filter(k => k.length > 0);
 
 // Supporto per rotazione MODELLI se specificati come lista separata da virgola
-// MODELLI FREE TIER VALIDI (Maggio 2026):
-//   - gemini-2.5-flash: modello Flash più recente, free tier attivo
-//   - gemini-1.5-flash: stabile, free tier con 1500 RPD
-//   - gemini-1.5-flash-8b: leggero, free tier con limiti generosi
-// RIMOSSI: gemini-2.0-flash-exp (deprecato giu 2026), gemini-1.5-pro (solo paid apr 2026)
+// MODELLI VERIFICATI ESISTENTI (ListModels API, Maggio 2026):
+//   - gemini-2.5-flash: Flash più recente e potente
+//   - gemini-2.0-flash: stabile, buon bilanciamento
+//   - gemini-2.0-flash-lite: leggero, per fallback veloce
+// RIMOSSI DALL'API: TUTTA la famiglia 1.5 (flash, flash-8b, pro) non esiste più!
 const DEFAULT_MODELS = [
   "gemini-2.5-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-8b",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
 ];
 
-// Filtra automaticamente modelli noti come non-free-tier o deprecati
-const BLOCKED_MODELS = ['gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-1.0-pro'];
+// Filtra automaticamente modelli che non esistono più nell'API
+const BLOCKED_MODELS = [
+  'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro',
+  'gemini-2.0-flash-exp', 'gemini-1.0-pro'
+];
 
 const MODEL_LIST = (RAW_MODEL_NAME 
   ? RAW_MODEL_NAME.split(',').map(m => m.replace(/['"]+/g, '').trim()).filter(m => m.length > 0)
@@ -58,15 +61,15 @@ if (API_KEYS.length > 0) {
 
 /**
  * Token limits per model (TPM - Tokens Per Minute)
- * Free-tier limits (Maggio 2026):
- *   gemini-2.5-flash:      15 req/min, 1500 req/day (Flash standard)
- *   gemini-1.5-flash:      15 req/min, 1500 req/day
- *   gemini-1.5-flash-8b:   15 req/min, 1500 req/day (leggero)
+ * Modelli verificati via ListModels API (Maggio 2026):
+ *   gemini-2.5-flash:      quota Flash standard
+ *   gemini-2.0-flash:      quota Flash standard  
+ *   gemini-2.0-flash-lite: quota Flash lite (più generosa)
  */
 const MODEL_TOKEN_LIMITS: Record<string, number> = {
   'gemini-2.5-flash': 250000,
-  'gemini-1.5-flash': 250000,
-  'gemini-1.5-flash-8b': 250000,
+  'gemini-2.0-flash': 250000,
+  'gemini-2.0-flash-lite': 250000,
   'default': 100000
 };
 
@@ -548,7 +551,7 @@ export const repairAndParseJson = async (rawInput: string): Promise<any[]> => {
   `;
 
   try {
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash" });
     const result = await model.generateContent(prompt);
     const response = await result.response;
 
